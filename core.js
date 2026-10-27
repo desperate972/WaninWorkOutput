@@ -1,5 +1,6 @@
 export const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Taipei' }).format(new Date());
 export const stamp = () => new Date().toISOString();
+let entryOrder = 0;
 export function validDate(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
@@ -9,6 +10,7 @@ export function validRevision(r) {
     Array.isArray(r.parents) && r.parents.every(p => typeof p === 'string') && !r.parents.includes(r.id) &&
     validDate(r.date) && typeof r.text === 'string' && r.text.length <= 1000000 &&
     typeof r.done === 'boolean' && typeof r.deleted === 'boolean' &&
+    (r.order === undefined || (typeof r.order === 'string' && r.order.length <= 30)) &&
     typeof r.createdAt === 'string' && Number.isFinite(Date.parse(r.createdAt)) &&
     typeof r.updatedAt === 'string' && Number.isFinite(Date.parse(r.updatedAt));
 }
@@ -27,19 +29,20 @@ export function heads(revisions) {
   }));
 }
 export function makeRevision({ previous = [], text, date, done, deleted = false, recordId }) {
-  if (!validDate(date) || typeof text !== 'string' || (!deleted && !text.trim())) throw Error('請填寫有效日期及工作內容。');
+  if (!validDate(date) || typeof text !== 'string' || text.length > 1000000 || (!deleted && !text.trim())) throw Error('請填寫有效日期及工作內容。');
   const now = stamp();
   return {
     id: crypto.randomUUID(), recordId: recordId || previous[0]?.recordId || crypto.randomUUID(),
     parents: previous.map(r => r.id), text, date, done: Boolean(done), deleted,
-    createdAt: previous[0]?.createdAt || now, updatedAt: now
+    createdAt: previous[0]?.createdAt || now, updatedAt: now,
+    order: previous[0]?.order || String(++entryOrder).padStart(12, '0')
   };
 }
 export function entriesFor(revisions, date, done) {
   const groups = heads(revisions);
   if (groups.some(g => g.conflict && g.versions.some(r => r.date === date))) throw Error(`${date} 有尚未處理的不同版本，請先選擇要保留的版本。`);
   return groups.map(g => g.versions[0]).filter(r => !r.deleted && r.date === date && r.done === done)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.recordId.localeCompare(b.recordId));
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || (a.order || '').localeCompare(b.order || '') || a.recordId.localeCompare(b.recordId));
 }
 export function txt(revisions, date, done) {
   return entriesFor(revisions, date, done).map((r, i) => `${i + 1}.${r.text}`).join('\r\n');

@@ -18,7 +18,7 @@ function confirmAction(title, message, labels = {}) {
   return new Promise(resolve => {
     const finish = value => { $('confirm-dialog').close(); $('confirm-yes').onclick = null; $('confirm-no').onclick = null; $('confirm-dialog').oncancel = null; resolve(value); };
     $('confirm-yes').onclick = () => finish(true); $('confirm-no').onclick = () => finish(false);
-    $('confirm-dialog').oncancel = e => { e.preventDefault(); finish(false); };
+    $('confirm-dialog').oncancel = e => { e.preventDefault(); finish(null); };
   });
 }
 function openDatabase() { return new Promise((resolve, reject) => { const req = indexedDB.open('wanin-work-output-v1', 1); req.onupgradeneeded = () => req.result.createObjectStore('state'); req.onsuccess = () => resolve(req.result); req.onerror = () => reject(Error('無法開啟本地儲存空間，請允許網站儲存資料。')); }); }
@@ -37,7 +37,7 @@ function render() {
   const normal = dated.filter(g => !g.conflict);
   $('count-all').textContent = dated.length; $('count-todo').textContent = normal.filter(g => !g.versions[0].done).length; $('count-done').textContent = normal.filter(g => g.versions[0].done).length;
   const visible = dated.filter(g => g.conflict || queryStatus === 'all' || g.versions[0].done === (queryStatus === 'done'))
-    .sort((a, b) => b.versions[0].date.localeCompare(a.versions[0].date) || a.versions[0].createdAt.localeCompare(b.versions[0].createdAt) || a.recordId.localeCompare(b.recordId));
+    .sort((a, b) => b.versions[0].date.localeCompare(a.versions[0].date) || a.versions[0].createdAt.localeCompare(b.versions[0].createdAt) || (a.versions[0].order || '').localeCompare(b.versions[0].order || '') || a.recordId.localeCompare(b.recordId));
   $('entries').innerHTML = visible.map(g => {
     if (g.conflict) return `<article class="entry conflict"><strong>這筆工作有 ${g.versions.length} 個不同版本</strong><p class="hint">選擇要保留的版本。所有舊版本仍保存在完整備份。</p>${g.versions.map(r => `<div class="conflict-version"><p class="entry-text">${escape(r.deleted ? '〔此版本已刪除〕\n' + r.text : r.text)}</p><div class="entry-meta">${escape(r.date)} · ${r.done ? '完成' : '未完成'} · ${escape(formatTime(r.updatedAt))}</div><button class="secondary small" data-action="resolve" data-id="${escape(r.id)}">保留此版本${r.deleted ? '（刪除）' : ''}</button></div>`).join('')}</article>`;
     const r = g.versions[0];
@@ -291,6 +291,7 @@ async function boot() {
       let chunks = currentImportChunks(); const duplicate = chunks.some(t => existing.has(t)) || new Set(chunks).size !== chunks.length;
       if (duplicate) {
         const skip = await confirmAction('偵測到可能重複的工作', '要跳過相同日期、狀態及內容的重複項目，還是全部加入？', { yes: '跳過重複', no: '全部加入' });
+        if (skip === null) return;
         if (skip) chunks = chunks.filter(t => { if (existing.has(t)) return false; existing.add(t); return true; });
       }
       const revisions = chunks.map(text => makeRevision({ text, date, done })); state.revisions.push(...revisions);

@@ -107,3 +107,30 @@ test('duplicate report files converge without deletion', async () => {
   const b=create('更新',{previous:[a]}); await drive.writeReport(day,false,[a,b],drive.files);
   assert.equal(drive.contents.get(files[0].id),'1.更新'); assert.equal(drive.contents.get('duplicate'),'1.更新'); assert.equal(drive.files.length,2);
 });
+
+test('batch imports retain input order even at identical timestamps', () => {
+  const revisions = Array.from({length:100},(_,i)=>create(`第 ${i+1} 件`));
+  for (const r of revisions) r.createdAt='2026-10-27T00:00:00Z';
+  const lines = txt(revisions,day,false).split('\r\n');
+  assert.equal(lines[0],'1.第 1 件'); assert.equal(lines[99],'100.第 100 件');
+});
+test('expired authorization stops API access without losing stored revisions', async () => {
+  const drive = new Drive({});
+  await assert.rejects(()=>drive.request('/files'),/過期/); assert.equal(drive.connected,false);
+});
+test('401 clears the in-memory token and requests reconnection', async () => {
+  const previousFetch=globalThis.fetch; let notified=false;
+  globalThis.fetch=async()=>({ok:false,status:401,json:async()=>({error:{message:'Expired'}})});
+  try {
+    const drive=new Drive({},()=>notified=true); drive.token='test-only'; drive.expires=Date.now()+10000;
+    await assert.rejects(()=>drive.request('/files'),/Expired/); assert.equal(drive.token,null); assert.equal(notified,true);
+  } finally {globalThis.fetch=previousFetch;}
+});
+test('quota errors are reported rather than marked successful', async () => {
+  const previousFetch=globalThis.fetch;
+  globalThis.fetch=async()=>({ok:false,status:403,json:async()=>({})});
+  try {
+    const drive=new Drive({}); drive.token='test-only'; drive.expires=Date.now()+10000;
+    await assert.rejects(()=>drive.request('/files'),/用量限制/);
+  } finally {globalThis.fetch=previousFetch;}
+});
