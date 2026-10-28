@@ -232,7 +232,8 @@ async function boot() {
   db = await openDatabase(); state = await readState();
   validateBackup({ format: 'wanin-backup-v1', revisions: state.revisions });
   drive = new Drive(config);
-  $('entry-date').value = $('filter-date').value = $('import-date').value = $('export-date').value = today();
+  $('entry-date').value = $('import-date').value = $('export-date').value = today();
+  $('filter-date').value = ''; // Show work from all dates when opening the app.
   const draft = storageGet('wanin-draft', null);
   if (draft) {
     $('entry-text').value = draft.text || ''; $('entry-date').value = validDate(draft.date) ? draft.date : today(); $('entry-done').checked = Boolean(draft.done);
