@@ -42,7 +42,7 @@
     <label for="api-key">Google Picker API Key</label><input id="api-key" required autocomplete="off">
     <label for="project-number">Google Cloud 專案編號</label><input id="project-number" inputmode="numeric" placeholder="可從 Client ID 前段推算">
     <label for="folder-id">目標資料夾 ID 或連結</label><input id="folder-id" required>
-    <p class="hint">首次連線請在 Google 選擇器中選取同一個資料夾，授予存取權。Google 權杖只保存在記憶體，重新開啟或過期後需再次連接。</p>
+    <p class="hint">首次存取時選取資料夾授權，之後按「立即同步」即可沿用原資料夾；只有存取權失效時才需重選。Google 權杖只保存在記憶體，重新開啟或過期後需再次連接。</p>
     <p><a href="./SETUP.html" target="_blank" rel="noopener">查看免費設定教學 ↗</a></p><div class="dialog-actions"><button type="button" id="disconnect-button" class="quiet">中斷連線</button><button type="submit" class="primary">儲存設定</button></div>
   </form></dialog>
   <dialog id="import-dialog"><div class="dialog-heading"><h2>匯入 TXT</h2><button class="icon close-dialog" aria-label="關閉">×</button></div>

@@ -31,9 +31,13 @@ export class Drive {
     if (!response.ok) {
       const error = await response.json().catch(() => ({}));
       if (response.status === 401) { this.disconnect(); this.onAuthLost(); }
-      if (response.status === 404) throw Error('找不到雲端檔案或尚未授權資料夾，請重新選取目標資料夾。');
-      if (response.status === 403) throw Error('Google Drive 拒絕存取，請檢查資料夾權限、API 設定或用量限制。');
-      throw Error(error.error?.message || `Google Drive 錯誤 ${response.status}`);
+      const message = response.status === 404 ? '找不到雲端檔案或尚未授權資料夾，請重新選取目標資料夾。'
+        : response.status === 403 ? 'Google Drive 拒絕存取，請檢查資料夾權限、API 設定或用量限制。'
+        : error.error?.message || `Google Drive 錯誤 ${response.status}`;
+      const failure = Error(message);
+      failure.status = response.status;
+      failure.reasons = (error.error?.errors || []).map(item => item.reason);
+      throw failure;
     }
     return response.status === 204 ? null : response.json();
   }
@@ -47,11 +51,28 @@ export class Drive {
     } while (page);
     return files.sort((a, b) => (a.createdTime || '').localeCompare(b.createdTime || '') || a.id.localeCompare(b.id));
   }
+  async targetFolder() {
+    const target = await this.request(`/files/${encodeURIComponent(this.config.folderId)}?fields=id,mimeType,trashed,capabilities(canAddChildren)`);
+    if (target.trashed || target.mimeType !== 'application/vnd.google-apps.folder' || !target.capabilities?.canAddChildren) throw Error('原資料夾已移至垃圾桶或無法寫入，請確認 Google Drive 資料夾權限。');
+    return target;
+  }
+  async authorizeTargetFolder(loadPicker = async () => {}) {
+    try {
+      await this.targetFolder();
+      return; // The existing per-file grant survives obtaining a new access token.
+    } catch (error) {
+      const needsSelection = error.status === 404 || (error.status === 403 && error.reasons?.includes('insufficientFilePermissions'));
+      if (!needsSelection) throw error; // Never open Picker for network, quota, API configuration or authentication errors.
+    }
+    await loadPicker();
+    const chosen = await this.pickFolder();
+    if (chosen !== this.config.folderId) throw Error('選取的資料夾與設定不同，未同步任何資料。請選取你設定的工作紀錄資料夾。');
+    await this.targetFolder();
+  }
   async ensureFolder() {
     if (this.dataFolder) return this.dataFolder;
     const root = this.config.folderId;
-    const target = await this.request(`/files/${encodeURIComponent(root)}?fields=id,mimeType,capabilities(canAddChildren)`);
-    if (target.mimeType !== 'application/vnd.google-apps.folder' || !target.capabilities?.canAddChildren) throw Error('目標必須是你可以寫入的 Google Drive 資料夾。');
+    await this.targetFolder();
     const folders = await this.list(`'${root}' in parents and appProperties has { key='wanin' and value='data-v1' }`);
     if (folders.length) this.dataFolder = folders[0].id;
     else this.dataFolder = (await this.request('/files?fields=id', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: '_WaninWorkOutput_data', mimeType: 'application/vnd.google-apps.folder', parents: [root], appProperties: { wanin: 'data-v1' } }) })).id;

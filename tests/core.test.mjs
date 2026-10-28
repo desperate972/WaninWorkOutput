@@ -134,3 +134,55 @@ test('quota errors are reported rather than marked successful', async () => {
     await assert.rejects(()=>drive.request('/files'),/用量限制/);
   } finally {globalThis.fetch=previousFetch;}
 });
+
+test('reuses an accessible saved folder without loading or opening Picker', async () => {
+  const drive = new Drive({folderId:'saved-folder'}); let pickerLoads=0, pickerOpens=0;
+  drive.request = async path => { assert.match(path,/saved-folder/); return {id:'saved-folder',mimeType:'application/vnd.google-apps.folder',capabilities:{canAddChildren:true}}; };
+  drive.pickFolder = async () => { pickerOpens++; return 'saved-folder'; };
+  await drive.authorizeTargetFolder(async () => pickerLoads++);
+  await drive.authorizeTargetFolder(async () => pickerLoads++);
+  assert.equal(pickerLoads,0); assert.equal(pickerOpens,0);
+});
+test('a fresh connection reuses previously granted folder access', async () => {
+  const previousGoogle=globalThis.google;
+  globalThis.google={accounts:{oauth2:{initTokenClient: options=>({requestAccessToken:()=>options.callback({access_token:'new-test-token',expires_in:3600})})}}};
+  try {
+    const drive=new Drive({folderId:'saved-folder',clientId:'test-only'});
+    drive.request=async path=>path.startsWith('/about') ? {user:{permissionId:'same-account'}} : {mimeType:'application/vnd.google-apps.folder',capabilities:{canAddChildren:true}};
+    drive.pickFolder=async()=>assert.fail('reconnection must not open Picker');
+    const user=await drive.connect(); await drive.authorizeTargetFolder();
+    assert.equal(user.permissionId,'same-account'); assert.equal(drive.connected,true);
+  } finally { if(previousGoogle===undefined) delete globalThis.google; else globalThis.google=previousGoogle; }
+});
+test('missing per-file access opens Picker once and validates the chosen folder', async () => {
+  const drive=new Drive({folderId:'saved-folder'}); let granted=false, loads=0, opens=0;
+  drive.request=async()=>{if(!granted) throw Object.assign(Error('not shared'),{status:404}); return {mimeType:'application/vnd.google-apps.folder',capabilities:{canAddChildren:true}};};
+  drive.pickFolder=async()=>{opens++; granted=true; return 'saved-folder';};
+  await drive.authorizeTargetFolder(async()=>loads++); await drive.authorizeTargetFolder(async()=>loads++);
+  assert.equal(loads,1); assert.equal(opens,1);
+});
+test('insufficient file permission can request the same folder grant again', async () => {
+  const drive=new Drive({folderId:'saved-folder'}); let granted=false;
+  drive.request=async()=>{if(!granted) throw Object.assign(Error('permission'),{status:403,reasons:['insufficientFilePermissions']}); return {mimeType:'application/vnd.google-apps.folder',capabilities:{canAddChildren:true}};};
+  drive.pickFolder=async()=>{granted=true; return 'saved-folder';}; await drive.authorizeTargetFolder(); assert.equal(granted,true);
+});
+test('quota, API, network and authentication errors never open Picker', async () => {
+  for(const failure of [Object.assign(Error('quota'),{status:403,reasons:['userRateLimitExceeded']}),Object.assign(Error('API disabled'),{status:403,reasons:['accessNotConfigured']}),Object.assign(Error('expired'),{status:401}),Error('network')]) {
+    const drive=new Drive({folderId:'saved-folder'}); drive.request=async()=>{throw failure;}; drive.pickFolder=async()=>assert.fail('unexpected Picker');
+    await assert.rejects(()=>drive.authorizeTargetFolder(),e=>e===failure);
+  }
+});
+test('wrong folder selection cannot silently switch sync destination', async () => {
+  const drive=new Drive({folderId:'saved-folder'}); drive.request=async()=>{throw Object.assign(Error('missing'),{status:404});}; drive.pickFolder=async()=>'other-folder';
+  await assert.rejects(()=>drive.authorizeTargetFolder(),/選取的資料夾與設定不同/); assert.equal(drive.config.folderId,'saved-folder');
+});
+test('read-only and trashed targets fail without writing or opening Picker', async () => {
+  for(const target of [{mimeType:'application/vnd.google-apps.folder',capabilities:{canAddChildren:false}},{mimeType:'application/vnd.google-apps.folder',trashed:true,capabilities:{canAddChildren:true}}]) {
+    const drive=new Drive({folderId:'saved-folder'}); drive.request=async()=>target; drive.pickFolder=async()=>assert.fail('unexpected Picker');
+    await assert.rejects(()=>drive.authorizeTargetFolder(),/垃圾桶或無法寫入/);
+  }
+});
+test('cancelling reauthorization preserves the configured folder', async () => {
+  const drive=new Drive({folderId:'saved-folder'}); drive.request=async()=>{throw Object.assign(Error('missing'),{status:404});}; drive.pickFolder=async()=>{throw Error('已取消資料夾授權。');};
+  await assert.rejects(()=>drive.authorizeTargetFolder(),/取消/); assert.equal(drive.config.folderId,'saved-folder');
+});

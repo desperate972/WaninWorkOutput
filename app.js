@@ -5,6 +5,7 @@ const DEFAULT = { revisions: [], uploaded: [], binding: null, reports: [], lastS
 let state, db, drive, busy = false, syncing = false, retry = 0, timer, toastTimer, editor = null, importText = '', importChunks = [], exportSnapshot = null, exportFiles = [], queryStatus = 'all', localOwner = true;
 let config = { ...window.WANIN_CONFIG };
 let previewEpoch = 0;
+let connecting = false;
 const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const formatTime = value => value ? new Intl.DateTimeFormat('zh-TW', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(new Date(value)) : '尚無紀錄';
 function notify(message, error = false) { $('toast').textContent = message; $('toast').className = error ? 'error' : ''; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, error ? 12000 : 5000); }
@@ -47,7 +48,7 @@ function render() {
   $('conflict-banner').hidden = !groups.some(g => g.conflict);
   $('list-summary').textContent = `顯示 ${visible.length} 筆 · 共 ${active.length} 筆工作`;
   document.querySelectorAll('[data-status]').forEach(b => { const selected = b.dataset.status === queryStatus; b.classList.toggle('active', selected); b.setAttribute('aria-pressed', selected); });
-  $('connect-button').textContent = drive?.connected ? '重新連接 / 選取資料夾' : '連接 Google Drive';
+  $('connect-button').textContent = drive?.connected ? '重新連接 Google' : '連接 Google Drive';
 }
 async function addRevision(r) {
   state.revisions.push(r);
@@ -57,6 +58,7 @@ function resetEditor() { editor = null; $('entry-text').value = ''; $('entry-don
 function saveDraft() { localStorage.setItem('wanin-draft', JSON.stringify({ text: $('entry-text').value, date: $('entry-date').value, done: $('entry-done').checked, editor })); $('draft-note').textContent = '草稿已存本地'; }
 function schedule(delay = 4000) {
   clearTimeout(timer);
+  if (connecting) return;
   if (!drive?.connected || !localOwner) { if (state && !syncing) status('已存本地', `${pendingCount()} 個版本待同步；連接 Google Drive 後自動同步。`); return; }
   timer = setTimeout(() => guard(() => sync())(), delay);
 }
@@ -122,22 +124,25 @@ function loadScript(src, ready) {
   return new Promise((resolve, reject) => { const script = document.createElement('script'); script.src = src; script.async = true; const timeout = setTimeout(() => reject(Error('Google 元件載入逾時，請檢查網路。')), 20000); script.onload = () => { clearTimeout(timeout); resolve(); }; script.onerror = () => { clearTimeout(timeout); script.remove(); reject(Error('無法載入 Google 元件，請確認網路或擋廣告設定。')); }; document.head.append(script); });
 }
 async function connect() {
-  if (syncing) throw Error('請等目前同步結束後再重新連接。');
-  if (!config.clientId || !config.apiKey) { openSettings(); return; }
-  $('connect-button').disabled = true;
+  if (syncing || connecting) throw Error('連接或同步正在進行，請稍候再試。');
+  if (!config.clientId) { openSettings(); return; }
+  connecting = true; clearTimeout(timer);
+  $('connect-button').disabled = true; $('sync-button').disabled = true;
   try {
-    await Promise.all([loadScript('https://accounts.google.com/gsi/client', () => Boolean(globalThis.google?.accounts?.oauth2)), loadScript('https://apis.google.com/js/api.js', () => Boolean(globalThis.gapi))]);
+    await loadScript('https://accounts.google.com/gsi/client', () => Boolean(globalThis.google?.accounts?.oauth2));
     drive = new Drive(config, () => status('需要重新連接', 'Google 授權已過期；內容仍在本地。'));
     const user = await drive.connect();
     if (state.binding && (state.binding.account !== user.permissionId || state.binding.folder !== config.folderId)) throw Error('目前本地紀錄綁定另一個 Google 帳號或資料夾。請使用原帳號與資料夾；若要搬移，先下載完整備份並使用另一個瀏覽器設定檔還原。');
-    const chosen = await drive.pickFolder();
-    if (chosen !== config.folderId) throw Error('選取的資料夾與設定不同，未同步任何資料。請選取你設定的工作紀錄資料夾。');
+    await drive.authorizeTargetFolder(() => loadScript('https://apis.google.com/js/api.js', () => Boolean(globalThis.gapi)));
     if (!state.binding && state.revisions.length && !await confirmAction('同步本地紀錄到 Google Drive？', `將把本機的 ${state.revisions.length} 個工作版本上傳到目前選取的資料夾。`)) { drive.disconnect(); return; }
     state.binding = { account: user.permissionId, folder: config.folderId };
     await persist(); await sync();
     notify(`已連接 ${user.emailAddress || user.displayName || 'Google Drive'}`);
   } catch (e) { drive?.disconnect(); status('尚未連接', e.message); throw e; }
-  finally { $('connect-button').disabled = false; render(); }
+  finally {
+    connecting = false; $('connect-button').disabled = false; $('sync-button').disabled = false; render();
+    if (drive?.connected) schedule(30000);
+  }
 }
 function openSettings() {
   $('client-id').value = config.clientId || ''; $('api-key').value = config.apiKey || ''; $('project-number').value = config.projectNumber || ''; $('folder-id').value = config.folderId || '';
@@ -266,7 +271,7 @@ async function boot() {
   document.querySelectorAll('.close-dialog').forEach(b => b.onclick = () => b.closest('dialog').close());
   $('settings-button').onclick = openSettings;
   $('settings-form').onsubmit = guard(async e => {
-    e.preventDefault(); if (syncing) throw Error('同步進行中，請稍後再修改連線設定。');
+    e.preventDefault(); if (syncing || connecting) throw Error('連接或同步進行中，請稍後再修改連線設定。');
     const clientId = $('client-id').value.trim(), apiKey = $('api-key').value.trim();
     const value = $('folder-id').value.trim(), folder = value.match(/\/folders\/([\w-]+)/)?.[1] || value;
     if (!/^[\w-]+$/.test(folder)) throw Error('請填寫有效的資料夾 ID 或 Google Drive 資料夾連結。');
@@ -277,8 +282,13 @@ async function boot() {
     localStorage.setItem('wanin-config', JSON.stringify(config)); drive?.disconnect(); drive = new Drive(config); clearTimeout(timer);
     $('settings-dialog').close(); status('設定已保存', '請按「連接 Google Drive」完成登入與資料夾選取。'); render();
   });
-  $('disconnect-button').onclick = () => { if (syncing) return notify('請等同步結束後再中斷。', true); drive?.disconnect(); clearTimeout(timer); $('settings-dialog').close(); status('已中斷連線', '工作保留在本地；Google 帳號的網站授權可至帳號設定撤銷。'); render(); };
-  $('connect-button').onclick = guard(connect); $('sync-button').onclick = guard(() => sync());
+  $('disconnect-button').onclick = () => { if (syncing || connecting) return notify('請等連接或同步結束後再中斷。', true); drive?.disconnect(); clearTimeout(timer); $('settings-dialog').close(); status('已中斷連線', '工作保留在本地；Google 帳號的網站授權可至帳號設定撤銷。'); render(); };
+  $('connect-button').onclick = guard(connect);
+  $('sync-button').onclick = guard(async () => {
+    if (connecting || syncing) throw Error('連接或同步正在進行，請稍候再試。');
+    if (!drive?.connected) return connect();
+    await sync();
+  });
   $('import-button').onclick = () => { $('import-date').value = $('filter-date').value || today(); $('import-dialog').showModal(); renderImport(); };
   $('import-file').onchange = guard(decodeImport); $('import-encoding').onchange = guard(decodeImport);
   ['import-date', 'import-status', 'import-mode', 'strip-numbers'].forEach(id => $(id).onchange = renderImport);
