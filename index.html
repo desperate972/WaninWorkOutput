@@ -4,8 +4,8 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#1d6554"><meta name="description" content="記下每天的工作，跨裝置同步並輸出純文字紀錄。">
   <title>日常工作簿 · Wanin</title>
-  <link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css">
-  <script src="./config.js"></script><script type="module" src="./app.js"></script>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261028-2">
+  <script src="./config.js"></script><script type="module" src="./app.js?v=20261028-2"></script>
 </head>
 <body>
   <header class="topbar"><a class="brand" href="./"><span class="brand-icon">W</span><span>日常工作簿<small>WANIN WORK OUTPUT</small></span></a>
@@ -25,7 +25,7 @@
         <p class="aside-note">自動同步需要網頁保持開啟、連線及 Google 授權有效。離線時先保存在本地。</p>
       </aside>
       <section class="panel list-panel"><div class="section-heading"><h2>工作清單</h2><span class="muted">02 / 回顧</span></div>
-        <div class="toolbar"><div class="date-filter"><label for="filter-date">查看日期</label><input id="filter-date" type="date"><button id="today-button" class="quiet">今天</button><button id="all-dates" class="quiet">所有日期</button></div><button id="export-button" class="primary">↧ 輸出 TXT</button></div>
+        <div class="toolbar"><div class="date-filter"><label for="filter-date">查看日期</label><input id="filter-date" type="date" autocomplete="off"><button id="today-button" class="quiet">今天</button><button id="all-dates" class="quiet">所有日期</button><span id="date-range-label" class="muted" role="status">顯示範圍：所有日期</span></div><button id="export-button" class="primary">↧ 輸出 TXT</button></div>
         <label class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="搜尋工作內容" aria-label="搜尋工作內容"></label>
         <div class="tabs" role="group" aria-label="完成狀態篩選"><button class="tab active" data-status="all">全部 <span id="count-all">0</span></button><button class="tab" data-status="todo">未完成 <span id="count-todo">0</span></button><button class="tab" data-status="done">已完成 <span id="count-done">0</span></button></div>
         <div id="conflict-banner" class="warning" hidden>有不同裝置的修改版本，請先選擇要保留的內容，再更新該日期的 TXT。</div>
@@ -33,7 +33,7 @@
         <footer class="list-footer"><span id="list-summary">共 0 筆工作</span><span id="export-status" role="status">TXT 尚未更新</span></footer>
       </section>
     </div>
-    <footer class="page-footer">日常工作簿 <span>原文記錄 · 日期分類 · 純文字輸出</span></footer>
+    <footer class="page-footer">日常工作簿 <span>原文記錄 · 日期分類 · 純文字輸出 · v2026.10.28.2</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
   <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>Google Drive 連線設定</h2><button type="button" class="icon close-dialog" aria-label="關閉">×</button></div>

@@ -36,6 +36,9 @@ function render() {
   const active = groups.filter(g => g.conflict || !g.versions[0].deleted);
   const dated = active.filter(g => g.versions.some(r => (!date || r.date === date) && r.text.toLocaleLowerCase().includes(search)));
   const normal = dated.filter(g => !g.conflict);
+  $('date-range-label').textContent = date ? `顯示範圍：${date}` : '顯示範圍：所有日期';
+  $('all-dates').setAttribute('aria-pressed', String(!date));
+  $('today-button').setAttribute('aria-pressed', String(date === today()));
   $('count-all').textContent = dated.length; $('count-todo').textContent = normal.filter(g => !g.versions[0].done).length; $('count-done').textContent = normal.filter(g => g.versions[0].done).length;
   const visible = dated.filter(g => g.conflict || queryStatus === 'all' || g.versions[0].done === (queryStatus === 'done'))
     .sort((a, b) => b.versions[0].date.localeCompare(a.versions[0].date) || a.versions[0].createdAt.localeCompare(b.versions[0].createdAt) || (a.versions[0].order || '').localeCompare(b.versions[0].order || '') || a.recordId.localeCompare(b.recordId));
