@@ -4,14 +4,13 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#1d6554"><meta name="description" content="記下每天的工作，跨裝置同步並輸出純文字紀錄。">
   <title>日常工作簿 · Wanin</title>
-  <link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261028-3">
+  <link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261028-4">
   <script src="./config.js"></script><script type="module" src="./app.js?v=20261028-3"></script>
 </head>
 <body>
   <header class="topbar"><a class="brand" href="./"><span class="brand-icon">W</span><span>日常工作簿<small>WANIN WORK OUTPUT</small></span></a>
     <button id="settings-button" class="quiet">⚙ <span>連線設定</span></button></header>
   <main>
-    <section class="intro"><div><p class="eyebrow">把事情記下，把進度留下。</p><h1>今天，一件一件完成。</h1><p class="subtitle">保留你的原文，整理每天的完成與待辦。</p></div><span class="intro-mark" aria-hidden="true">✓</span></section>
     <section class="syncbar" aria-label="同步狀態"><div><span class="status-dot" id="status-dot"></span><strong id="sync-status" role="status">本地模式</strong><small id="sync-detail">內容先保存在這台裝置。</small></div><div class="sync-actions"><button id="sync-button" class="quiet">立即同步</button><button id="connect-button" class="small primary">連接 Google Drive</button></div></section>
     <div class="workspace">
       <aside>
@@ -34,7 +33,7 @@
         <footer class="list-footer"><span id="list-summary">共 0 筆工作</span><span id="export-status" role="status">TXT 尚未更新</span></footer>
       </section>
     </div>
-    <footer class="page-footer">日常工作簿 <span>原文記錄 · 日期分類 · 純文字輸出 · v2026.10.28.3</span></footer>
+    <footer class="page-footer">日常工作簿 <span>原文記錄 · 日期分類 · 純文字輸出 · v2026.10.28.4</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
   <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>Google Drive 連線設定</h2><button type="button" class="icon close-dialog" aria-label="關閉">×</button></div>
