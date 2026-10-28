@@ -9,6 +9,7 @@ export function validRevision(r) {
   return r && typeof r.id === 'string' && r.id.length <= 100 && typeof r.recordId === 'string' &&
     Array.isArray(r.parents) && r.parents.every(p => typeof p === 'string') && !r.parents.includes(r.id) &&
     validDate(r.date) && typeof r.text === 'string' && r.text.length <= 1000000 &&
+    (r.notes === undefined || (typeof r.notes === 'string' && r.notes.length <= 100000)) &&
     typeof r.done === 'boolean' && typeof r.deleted === 'boolean' &&
     (r.order === undefined || (typeof r.order === 'string' && r.order.length <= 30)) &&
     typeof r.createdAt === 'string' && Number.isFinite(Date.parse(r.createdAt)) &&
@@ -28,12 +29,13 @@ export function heads(revisions) {
     conflict: versions.length > 1
   }));
 }
-export function makeRevision({ previous = [], text, date, done, deleted = false, recordId }) {
+export function makeRevision({ previous = [], text, date, done, deleted = false, recordId, notes = previous[0]?.notes ?? '' }) {
   if (!validDate(date) || typeof text !== 'string' || text.length > 1000000 || (!deleted && !text.trim())) throw Error('請填寫有效日期及工作內容。');
+  if (typeof notes !== 'string' || notes.length > 100000) throw Error('備註必須是文字，且不可超過 100,000 字。');
   const now = stamp();
   return {
     id: crypto.randomUUID(), recordId: recordId || previous[0]?.recordId || crypto.randomUUID(),
-    parents: previous.map(r => r.id), text, date, done: Boolean(done), deleted,
+    parents: previous.map(r => r.id), text, notes, date, done: Boolean(done), deleted,
     createdAt: previous[0]?.createdAt || now, updatedAt: now,
     order: previous[0]?.order || String(++entryOrder).padStart(12, '0')
   };
@@ -45,7 +47,10 @@ export function entriesFor(revisions, date, done) {
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || (a.order || '').localeCompare(b.order || '') || a.recordId.localeCompare(b.recordId));
 }
 export function txt(revisions, date, done) {
-  return entriesFor(revisions, date, done).map((r, i) => `${i + 1}.${r.text}`).join('\r\n');
+  return entriesFor(revisions, date, done).map((r, i) => {
+    const note = r.notes?.trim() ? `\r\n  備註：${r.notes.replace(/\r\n?|\n/g, '\r\n        ')}` : '';
+    return `${i + 1}.${r.text}${note}`;
+  }).join('\r\n');
 }
 export const filename = (date, done) => `${date}_${done ? '完成' : '未完成'}.txt`;
 export function updatedFor(revisions, date) {

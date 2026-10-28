@@ -186,3 +186,47 @@ test('cancelling reauthorization preserves the configured folder', async () => {
   const drive=new Drive({folderId:'saved-folder'}); drive.request=async()=>{throw Object.assign(Error('missing'),{status:404});}; drive.pickFolder=async()=>{throw Error('已取消資料夾授權。');};
   await assert.rejects(()=>drive.authorizeTargetFolder(),/取消/); assert.equal(drive.config.folderId,'saved-folder');
 });
+
+test('note-only editing leaves original work, date and completion unchanged', () => {
+  const a=create('  工作原文\n第二行  ',{done:true});
+  const b=create(a.text,{previous:[a],date:a.date,done:a.done,notes:'補充進度'});
+  assert.equal(b.text,a.text); assert.equal(b.date,a.date); assert.equal(b.done,a.done); assert.equal(b.recordId,a.recordId); assert.equal(b.createdAt,a.createdAt); assert.equal(b.notes,'補充進度');
+});
+test('notes survive completion changes, date changes and deletion history', () => {
+  const a=create('工作',{notes:'等待新版測試'}), b=create(a.text,{previous:[a],done:true}), c=create(b.text,{previous:[b],date:'2026-10-28',done:true}), d=create(c.text,{previous:[c],date:c.date,done:true,deleted:true});
+  assert.equal(b.notes,a.notes); assert.equal(c.notes,a.notes); assert.equal(d.notes,a.notes);
+});
+test('explicitly clearing notes does not restore an older note', () => {
+  const a=create('工作',{notes:'舊備註'}), b=create(a.text,{previous:[a],notes:''}), c=create(b.text,{previous:[b],done:true});
+  assert.equal(b.notes,''); assert.equal(c.notes,''); assert.equal(txt([a,b,c],day,true),'1.工作');
+});
+test('TXT includes notes below the correct item with multiline indentation', () => {
+  const a=create('第一件',{notes:'進度\n待確認\r\n最後一行'}), b=create('第二件'); b.createdAt='2099-01-01T00:00:00Z';
+  assert.equal(txt([a,b],day,false),'1.第一件\r\n  備註：進度\r\n        待確認\r\n        最後一行\r\n2.第二件');
+});
+test('old revisions and backups without notes are still accepted', () => {
+  const a=create(); delete a.notes;
+  assert.equal(validateBackup({format:'wanin-backup-v1',revisions:[a]}).length,1);
+  assert.equal(txt([a],day,false),'1.工作 A');
+  assert.equal(create(a.text,{previous:[a],done:true}).notes,'');
+});
+test('backup roundtrip preserves multiline notes and rejects invalid note types', () => {
+  const a=create('工作',{notes:'第一行\n第二行 <script>純文字</script>'});
+  const restored=validateBackup(JSON.parse(JSON.stringify({format:'wanin-backup-v1',revisions:[a]})));
+  assert.equal(restored[0].notes,a.notes);
+  assert.throws(()=>validateBackup({format:'wanin-backup-v1',revisions:[{...a,notes:123}]}),/格式/);
+  assert.throws(()=>create('工作',{notes:'a'.repeat(100001)}),/備註/);
+});
+test('concurrent notes edits are preserved as separate versions', () => {
+  const a=create('工作'), b=create(a.text,{previous:[a],notes:'電腦備註'}), c=create(a.text,{previous:[a],notes:'手機備註'});
+  assert.equal(heads([a,b,c])[0].conflict,true); assert.throws(()=>txt([a,b,c],day,false),/不同版本/);
+  const resolved=create(c.text,{previous:[b,c],notes:c.notes});
+  assert.equal(txt([a,b,c,resolved],day,false),'1.工作\r\n  備註：手機備註');
+});
+test('Drive journal transfers notes and updates TXT when only notes change', async () => {
+  const drive=new MemoryDrive(), a=create('工作',{notes:'原備註'}); await drive.push(a);
+  const pulled=await drive.pull(new Set()); assert.equal(pulled.fetched[0].notes,a.notes);
+  let files=await drive.writeReport(day,false,[a],[]); const writes=drive.writes;
+  const b=create(a.text,{previous:[a],notes:'新備註'}); files=await drive.writeReport(day,false,[a,b],files);
+  assert.equal(drive.writes,writes+1); assert.equal(drive.contents.get(files[0].id),'1.工作\r\n  備註：新備註');
+});
