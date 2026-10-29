@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRevision, heads, txt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor } from '../core.js';
+import { makeRevision, heads, txt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel } from '../core.js';
 import { Drive } from '../drive.js';
 const day = '2026-10-27';
 const create = (text = '工作 A', extra = {}) => makeRevision({ text, date: day, done: false, ...extra });
@@ -229,4 +229,68 @@ test('Drive journal transfers notes and updates TXT when only notes change', asy
   let files=await drive.writeReport(day,false,[a],[]); const writes=drive.writes;
   const b=create(a.text,{previous:[a],notes:'新備註'}); files=await drive.writeReport(day,false,[a,b],files);
   assert.equal(drive.writes,writes+1); assert.equal(drive.contents.get(files[0].id),'1.工作\r\n  備註：新備註');
+});
+
+test('same-day and legacy jobs map to one day without rewriting old versions', () => {
+  const a=create('舊工作'); delete a.startDate; delete a.endDate;
+  assert.equal(validateBackup({format:'wanin-backup-v1',revisions:[a]}).length,1);
+  assert.equal(startOf(a),day); assert.equal(endOf(a),day); assert.deepEqual(datesOf(a),[day]); assert.equal(dateLabel(a),day);
+  assert.equal(a.startDate,undefined);
+});
+test('three-day jobs appear on all inclusive dates with notes, never outside', () => {
+  const a=create('跨日工作',{startDate:'2026-10-29',endDate:'2026-10-31',notes:'跨日備註'});
+  assert.deepEqual(datesOf(a),['2026-10-29','2026-10-30','2026-10-31']);
+  for(const date of datesOf(a)) {assert.equal(occursOn(a,date),true); assert.equal(txt([a],date,false),'1.跨日工作\r\n  備註：跨日備註');}
+  assert.equal(txt([a],'2026-10-28',false),''); assert.equal(txt([a],'2026-11-01',false),'');
+  assert.equal(heads([a]).length,1); assert.equal(dateLabel(a),'2026-10-29 ～ 2026-10-31');
+});
+test('range enumeration crosses month, year and leap boundaries in UTC', () => {
+  assert.deepEqual(datesOf(create('跨月',{startDate:'2026-10-31',endDate:'2026-11-02'})),['2026-10-31','2026-11-01','2026-11-02']);
+  assert.deepEqual(datesOf(create('跨年',{startDate:'2026-12-31',endDate:'2027-01-01'})),['2026-12-31','2027-01-01']);
+  assert.deepEqual(datesOf(create('閏年',{startDate:'2024-02-28',endDate:'2024-03-01'})),['2024-02-28','2024-02-29','2024-03-01']);
+});
+test('reversed, partial and inconsistent date ranges are rejected', () => {
+  assert.throws(()=>create('反向',{startDate:'2026-10-31',endDate:'2026-10-29'}),/結束日期/);
+  const a=create('正常',{startDate:'2026-10-29',endDate:'2026-10-31'});
+  const check=r=>validateBackup({format:'wanin-backup-v1',revisions:[r]});
+  assert.throws(()=>check({...a,endDate:undefined}),/格式/);
+  assert.throws(()=>check({...a,endDate:'2026-02-30'}),/格式/);
+  assert.throws(()=>check({...a,date:'2026-10-28'}),/格式/);
+});
+test('note-only, completion and deletion changes retain the original range', () => {
+  const a=create('工作',{startDate:'2026-10-29',endDate:'2026-10-31'}), b=makeRevision({previous:[a],text:a.text,done:false,notes:'補充'}), c=makeRevision({previous:[b],text:b.text,done:true}), d=makeRevision({previous:[c],text:c.text,done:true,deleted:true});
+  for(const r of [b,c,d]) {assert.equal(startOf(r),'2026-10-29');assert.equal(endOf(r),'2026-10-31');}
+  for(const date of datesOf(a)) {assert.equal(txt([a,b,c],date,false),'');assert.equal(txt([a,b,c],date,true),'1.工作\r\n  備註：補充');assert.equal(txt([a,b,c,d],date,true),'');}
+});
+test('shortening a range preserves old report dates and removes stale content', () => {
+  const a=create('工作',{startDate:'2026-10-29',endDate:'2026-10-31'}); a.updatedAt='2026-10-29T01:00:00Z';
+  const b=create(a.text,{previous:[a],startDate:'2026-10-30',endDate:'2026-10-30'});b.updatedAt='2026-10-29T02:00:00Z';
+  assert.deepEqual(reportDates([a,b]),['2026-10-29','2026-10-30','2026-10-31']);
+  assert.equal(txt([a,b],'2026-10-29',false),'');assert.equal(txt([a,b],'2026-10-30',false),'1.工作');assert.equal(txt([a,b],'2026-10-31',false),'');
+  assert.equal(updatedFor([a,b],'2026-10-29'),b.updatedAt);assert.equal(updatedFor([a,b],'2026-10-31'),b.updatedAt);
+});
+test('moving a range includes the union of old and new days for report cleanup', () => {
+  const a=create('工作',{startDate:'2026-10-29',endDate:'2026-10-31'}), b=create(a.text,{previous:[a],startDate:'2026-11-02',endDate:'2026-11-03'});
+  assert.deepEqual(reportDates([a,b]),['2026-10-29','2026-10-30','2026-10-31','2026-11-02','2026-11-03']);
+  assert.equal(txt([a,b],'2026-10-30',false),'');assert.equal(txt([a,b],'2026-11-03',false),'1.工作');
+});
+test('range conflicts block every affected date, and resolving retains chosen range', () => {
+  const a=create('工作',{startDate:'2026-10-29',endDate:'2026-10-31'}), b=create(a.text,{previous:[a],startDate:'2026-10-29',endDate:'2026-10-30'}), c=create(a.text,{previous:[a],startDate:'2026-10-30',endDate:'2026-11-01'});
+  for(const date of ['2026-10-29','2026-10-30','2026-10-31','2026-11-01']) assert.throws(()=>txt([a,b,c],date,false),/不同版本/);
+  const d=makeRevision({previous:[b,c],text:c.text,startDate:startOf(c),endDate:endOf(c),done:false});
+  assert.equal(txt([a,b,c,d],'2026-10-29',false),'');assert.equal(txt([a,b,c,d],'2026-11-01',false),'1.工作');
+});
+test('range backup roundtrip and a second device preserve all date fields', async () => {
+  const drive=new MemoryDrive(), a=create('工作',{startDate:'2026-10-29',endDate:'2026-10-31',notes:'備註'}); await drive.push(a);
+  const {fetched}=await drive.pull(new Set()); const restored=validateBackup(JSON.parse(JSON.stringify({format:'wanin-backup-v1',revisions:fetched})));
+  assert.equal(startOf(restored[0]),startOf(a));assert.equal(endOf(restored[0]),endOf(a));assert.equal(restored[0].notes,a.notes);
+});
+test('Drive writes both status files on all three days and clears shortened days', async () => {
+  const drive=new MemoryDrive(), a=create('工作',{startDate:'2026-10-29',endDate:'2026-10-31'});
+  let files=[];
+  for(const date of reportDates([a]))for(const done of [true,false])files.push(...await drive.writeReport(date,done,[a],files));
+  assert.equal(drive.files.length,6);
+  const b=create(a.text,{previous:[a],startDate:'2026-10-30',endDate:'2026-10-30'});
+  for(const date of reportDates([a,b]))for(const done of [true,false])await drive.writeReport(date,done,[a,b],drive.files);
+  for(const f of drive.files)assert.equal(drive.contents.get(f.id), f.appProperties.date==='2026-10-30'&&f.appProperties.status==='todo'?'1.工作':'');
 });

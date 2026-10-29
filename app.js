@@ -1,5 +1,5 @@
-import { today, stamp, validDate, validRevision, heads, makeRevision, txt, filename, splitImport, fingerprint, updatedFor, validateBackup } from './core.js?v=20261028-3';
-import { Drive } from './drive.js?v=20261028-3';
+import { today, stamp, validDate, validRevision, heads, makeRevision, txt, filename, splitImport, fingerprint, updatedFor, validateBackup, startOf, endOf, validRange, occursOn, dateLabel, datesOf, reportDates } from './core.js?v=20261029-1';
+import { Drive } from './drive.js?v=20261029-1';
 const $ = id => document.getElementById(id);
 const DEFAULT = { revisions: [], uploaded: [], binding: null, reports: [], lastSync: null };
 let state, db, drive, busy = false, syncing = false, retry = 0, timer, toastTimer, editor = null, importText = '', importChunks = [], exportSnapshot = null, exportFiles = [], queryStatus = 'all', localOwner = true;
@@ -35,19 +35,19 @@ function pendingCount() { const uploaded = new Set(state.uploaded); return state
 function render() {
   const groups = heads(state.revisions), date = $('filter-date').value, search = $('search').value.toLocaleLowerCase();
   const active = groups.filter(g => g.conflict || !g.versions[0].deleted);
-  const dated = active.filter(g => g.versions.some(r => (!date || r.date === date) && (r.text + '\n' + (r.notes || '')).toLocaleLowerCase().includes(search)));
+  const dated = active.filter(g => g.versions.some(r => (!date || occursOn(r, date)) && (r.text + '\n' + (r.notes || '')).toLocaleLowerCase().includes(search)));
   const normal = dated.filter(g => !g.conflict);
   $('date-range-label').textContent = date ? `顯示範圍：${date}` : '顯示範圍：所有日期';
   $('all-dates').setAttribute('aria-pressed', String(!date));
   $('today-button').setAttribute('aria-pressed', String(date === today()));
   $('count-all').textContent = dated.length; $('count-todo').textContent = normal.filter(g => !g.versions[0].done).length; $('count-done').textContent = normal.filter(g => g.versions[0].done).length;
   const visible = dated.filter(g => g.conflict || queryStatus === 'all' || g.versions[0].done === (queryStatus === 'done'))
-    .sort((a, b) => b.versions[0].date.localeCompare(a.versions[0].date) || a.versions[0].createdAt.localeCompare(b.versions[0].createdAt) || (a.versions[0].order || '').localeCompare(b.versions[0].order || '') || a.recordId.localeCompare(b.recordId));
+    .sort((a, b) => startOf(b.versions[0]).localeCompare(startOf(a.versions[0])) || a.versions[0].createdAt.localeCompare(b.versions[0].createdAt) || (a.versions[0].order || '').localeCompare(b.versions[0].order || '') || a.recordId.localeCompare(b.recordId));
   const notesMarkup = r => r.notes?.trim() ? `<div class="entry-notes"><span>備註</span><p>${escape(r.notes)}</p></div>` : '';
   $('entries').innerHTML = visible.map(g => {
-    if (g.conflict) return `<article class="entry conflict"><strong>這筆工作有 ${g.versions.length} 個不同版本</strong><p class="hint">選擇要保留的版本。所有舊版本仍保存在完整備份。</p>${g.versions.map(r => `<div class="conflict-version"><p class="entry-text">${escape(r.deleted ? '〔此版本已刪除〕\n' + r.text : r.text)}</p>${notesMarkup(r)}<div class="entry-meta">${escape(r.date)} · ${r.done ? '完成' : '未完成'} · ${escape(formatTime(r.updatedAt))}</div><button class="secondary small" data-action="resolve" data-id="${escape(r.id)}">保留此版本${r.deleted ? '（刪除）' : ''}</button></div>`).join('')}</article>`;
+    if (g.conflict) return `<article class="entry conflict"><strong>這筆工作有 ${g.versions.length} 個不同版本</strong><p class="hint">選擇要保留的版本。所有舊版本仍保存在完整備份。</p>${g.versions.map(r => `<div class="conflict-version"><p class="entry-text">${escape(r.deleted ? '〔此版本已刪除〕\n' + r.text : r.text)}</p>${notesMarkup(r)}<div class="entry-meta">${escape(dateLabel(r))} · ${r.done ? '完成' : '未完成'} · ${escape(formatTime(r.updatedAt))}</div><button class="secondary small" data-action="resolve" data-id="${escape(r.id)}">保留此版本${r.deleted ? '（刪除）' : ''}</button></div>`).join('')}</article>`;
     const r = g.versions[0];
-    return `<article class="entry ${r.done ? 'done' : ''}"><input class="toggle" type="checkbox" aria-label="切換完成狀態：${escape(r.text.slice(0, 30))}" ${r.done ? 'checked' : ''} data-action="toggle" data-id="${escape(r.id)}"><div class="entry-content"><p class="entry-text">${escape(r.text)}</p>${notesMarkup(r)}<div class="entry-meta"><span class="badge ${r.done ? 'done' : ''}">${r.done ? '完成' : '未完成'}</span><span>${escape(r.date)}</span><span>${state.uploaded.includes(r.id) ? '已同步' : '待同步'}</span></div></div><div class="entry-actions"><button class="quiet" data-action="notes" data-id="${escape(r.id)}">${r.notes?.trim() ? '編輯備註' : '新增備註'}</button><button class="quiet" data-action="edit" data-id="${escape(r.id)}">編輯</button><button class="quiet" data-action="delete" data-id="${escape(r.id)}">刪除</button></div></article>`;
+    return `<article class="entry ${r.done ? 'done' : ''}"><input class="toggle" type="checkbox" aria-label="切換完成狀態：${escape(r.text.slice(0, 30))}" ${r.done ? 'checked' : ''} data-action="toggle" data-id="${escape(r.id)}"><div class="entry-content"><p class="entry-text">${escape(r.text)}</p>${notesMarkup(r)}<div class="entry-meta"><span class="badge ${r.done ? 'done' : ''}">${r.done ? '完成' : '未完成'}</span><span>${escape(dateLabel(r))}</span><span>${state.uploaded.includes(r.id) ? '已同步' : '待同步'}</span></div></div><div class="entry-actions"><button class="quiet" data-action="notes" data-id="${escape(r.id)}">${r.notes?.trim() ? '編輯備註' : '新增備註'}</button><button class="quiet" data-action="edit" data-id="${escape(r.id)}">編輯</button><button class="quiet" data-action="delete" data-id="${escape(r.id)}">刪除</button></div></article>`;
   }).join('');
   $('empty').hidden = Boolean(visible.length); $('empty').querySelector('h3').textContent = active.length ? '沒有符合條件的工作' : '為今天留下第一筆紀錄';
   $('conflict-banner').hidden = !groups.some(g => g.conflict);
@@ -59,8 +59,12 @@ async function addRevision(r) {
   state.revisions.push(r);
   await persist(); render(); schedule();
 }
+function updateDateLimits() {
+  $('entry-end-date').min = $('entry-date').value;
+  $('import-end-date').min = $('import-date').value;
+}
 function resetEditor() { editor = null; $('entry-text').value = ''; $('entry-notes').value = ''; $('entry-done').checked = false; $('editor-title').textContent = '新增工作'; $('save-entry').textContent = '＋ 新增工作'; $('cancel-edit').hidden = true; localStorage.removeItem('wanin-draft'); $('draft-note').textContent = ''; }
-function saveDraft() { localStorage.setItem('wanin-draft', JSON.stringify({ text: $('entry-text').value, notes: $('entry-notes').value, date: $('entry-date').value, done: $('entry-done').checked, editor })); $('draft-note').textContent = '草稿已存本地'; }
+function saveDraft() { updateDateLimits(); localStorage.setItem('wanin-draft', JSON.stringify({ text: $('entry-text').value, notes: $('entry-notes').value, date: $('entry-date').value, endDate: $('entry-end-date').value, done: $('entry-done').checked, editor })); $('draft-note').textContent = '草稿已存本地'; }
 function schedule(delay = 4000) {
   clearTimeout(timer);
   if (connecting) return;
@@ -110,8 +114,8 @@ async function sync({ reports = true } = {}) {
 }
 async function updateReports({ date = null, force = false } = {}) {
   const snapshot = structuredClone(state.revisions);
-  const dates = date ? [date] : [...new Set(snapshot.map(r => r.date))].sort();
-  const blocked = new Set(heads(snapshot).filter(g => g.conflict).flatMap(g => g.versions.map(r => r.date)));
+  const dates = date ? [date] : reportDates(snapshot);
+  const blocked = new Set(heads(snapshot).filter(g => g.conflict).flatMap(g => g.versions.flatMap(datesOf)));
   let files = await drive.reports();
   for (const d of dates) {
     if (blocked.has(d)) { if (date) throw Error('這個日期有不同修改版本，請先處理。'); continue; }
@@ -158,13 +162,14 @@ function download(name, content, type = 'text/plain;charset=utf-8') {
 }
 function currentImportChunks() { return splitImport(importText, $('import-mode').value, $('strip-numbers').checked); }
 function renderImport() {
+  updateDateLimits();
   importChunks = currentImportChunks();
-  const date = $('import-date').value, done = $('import-status').value === 'done';
+  const date = $('import-date').value, endDate = $('import-end-date').value, done = $('import-status').value === 'done';
   const existing = heads(state.revisions).flatMap(g => g.versions).filter(r => !r.deleted);
-  const duplicates = importChunks.filter(t => existing.some(r => r.text === t && r.date === date && r.done === done)).length;
+  const duplicates = importChunks.filter(t => existing.some(r => r.text === t && startOf(r) === date && endOf(r) === endDate && r.done === done)).length;
   $('import-preview').textContent = importChunks.length ? importChunks.slice(0, 30).map((t, i) => `${i + 1}.${t}`).join('\n') : '請先選擇 TXT 檔案。';
   $('import-summary').textContent = `將加入 ${importChunks.length} 筆${duplicates ? `，其中 ${duplicates} 筆可能重複；確認時可決定是否跳過。` : '，不會刪除現有紀錄。'}${importChunks.length > 30 ? '預覽僅顯示前 30 筆。' : ''}`;
-  $('confirm-import').disabled = !importChunks.length || !validDate(date);
+  $('confirm-import').disabled = !importChunks.length || !validRange(date, endDate);
 }
 async function decodeImport() {
   const file = $('import-file').files[0];
@@ -237,22 +242,23 @@ async function boot() {
   db = await openDatabase(); state = await readState();
   validateBackup({ format: 'wanin-backup-v1', revisions: state.revisions });
   drive = new Drive(config);
-  $('entry-date').value = $('import-date').value = $('export-date').value = today();
+  $('entry-date').value = $('entry-end-date').value = $('import-date').value = $('import-end-date').value = $('export-date').value = today();
   $('filter-date').value = ''; // Show work from all dates when opening the app.
   const draft = storageGet('wanin-draft', null);
   if (draft) {
-    $('entry-text').value = draft.text || ''; $('entry-notes').value = draft.notes ?? draft.editor?.notes ?? ''; $('entry-date').value = validDate(draft.date) ? draft.date : today(); $('entry-done').checked = Boolean(draft.done);
+    $('entry-text').value = draft.text || ''; $('entry-notes').value = draft.notes ?? draft.editor?.notes ?? ''; $('entry-date').value = validDate(draft.date) ? draft.date : today(); $('entry-end-date').value = validDate(draft.endDate) ? draft.endDate : draft.editor ? endOf(draft.editor) : $('entry-date').value; $('entry-done').checked = Boolean(draft.done);
     if (draft.editor && state.revisions.some(r => r.id === draft.editor.id)) { editor = draft.editor; $('editor-title').textContent = '編輯工作'; $('save-entry').textContent = '儲存修改'; $('cancel-edit').hidden = false; }
     $('draft-note').textContent = '已還原本地草稿';
   }
+  updateDateLimits();
   $('entry-form').onsubmit = guard(async e => {
     e.preventDefault(); if (busy) return; busy = true;
     try {
-      const revision = makeRevision({ previous: editor ? [editor] : [], text: $('entry-text').value, notes: $('entry-notes').value, date: $('entry-date').value, done: $('entry-done').checked });
+      const revision = makeRevision({ previous: editor ? [editor] : [], text: $('entry-text').value, notes: $('entry-notes').value, date: $('entry-date').value, endDate: $('entry-end-date').value, done: $('entry-done').checked });
       await addRevision(revision); resetEditor(); notify('工作已保存在本地。');
     } finally { busy = false; }
   });
-  for (const id of ['entry-date', 'entry-text', 'entry-notes', 'entry-done']) $(id).addEventListener('input', guard(saveDraft));
+  for (const id of ['entry-date', 'entry-end-date', 'entry-text', 'entry-notes', 'entry-done']) $(id).addEventListener('input', guard(saveDraft));
   $('cancel-edit').onclick = () => resetEditor();
   $('entries').onclick = guard(async e => {
     const target = e.target.closest('[data-action]'); if (!target || busy) return;
@@ -264,14 +270,14 @@ async function boot() {
       $('notes-dialog').showModal(); $('notes-text').focus(); return;
     }
     if (action === 'edit') {
-      editor = structuredClone(r); $('entry-date').value = r.date; $('entry-text').value = r.text; $('entry-notes').value = r.notes || ''; $('entry-done').checked = r.done;
+      editor = structuredClone(r); $('entry-date').value = startOf(r); $('entry-end-date').value = endOf(r); $('entry-text').value = r.text; $('entry-notes').value = r.notes || ''; $('entry-done').checked = r.done;
       $('editor-title').textContent = '編輯工作'; $('save-entry').textContent = '儲存修改'; $('cancel-edit').hidden = false; saveDraft(); $('entry-text').focus(); $('entry-form').scrollIntoView({ behavior: 'smooth', block: 'center' }); return;
     }
     busy = true;
     try {
       if (action === 'delete' && !await confirmAction('刪除這筆工作？', '刪除會同步到其他裝置，也會更新對應 TXT。完整備份仍保留歷史版本。')) return;
       const versions = heads(state.revisions).find(g => g.recordId === r.recordId)?.versions || [r];
-      await addRevision(makeRevision({ previous: action === 'resolve' ? versions : [r], text: r.text, notes: r.notes || '', date: r.date, done: action === 'toggle' ? !r.done : r.done, deleted: action === 'delete' || r.deleted }));
+      await addRevision(makeRevision({ previous: action === 'resolve' ? versions : [r], text: r.text, notes: r.notes || '', startDate: startOf(r), endDate: endOf(r), done: action === 'toggle' ? !r.done : r.done, deleted: action === 'delete' || r.deleted }));
       if (editor?.recordId === r.recordId && action !== 'toggle') resetEditor();
     } finally { busy = false; render(); }
   });
@@ -281,7 +287,7 @@ async function boot() {
     if (notes === (previous.notes || '')) { $('notes-dialog').close(); return; }
     busy = true; $('save-notes').disabled = true;
     try {
-      await addRevision(makeRevision({ previous: [previous], text: previous.text, date: previous.date, done: previous.done, notes }));
+      await addRevision(makeRevision({ previous: [previous], text: previous.text, startDate: startOf(previous), endDate: endOf(previous), done: previous.done, notes }));
       $('notes-dialog').close(); notify('備註已保存在本地，工作原文保持不變。');
     } finally { busy = false; $('save-notes').disabled = false; }
   });
@@ -311,22 +317,22 @@ async function boot() {
     if (!drive?.connected) return connect();
     await sync();
   });
-  $('import-button').onclick = () => { $('import-date').value = $('filter-date').value || today(); $('import-dialog').showModal(); renderImport(); };
+  $('import-button').onclick = () => { $('import-date').value = $('import-end-date').value = $('filter-date').value || today(); $('import-dialog').showModal(); renderImport(); };
   $('import-file').onchange = guard(decodeImport); $('import-encoding').onchange = guard(decodeImport);
-  ['import-date', 'import-status', 'import-mode', 'strip-numbers'].forEach(id => $(id).onchange = renderImport);
+  ['import-date', 'import-end-date', 'import-status', 'import-mode', 'strip-numbers'].forEach(id => $(id).onchange = renderImport);
   $('confirm-import').onclick = guard(async () => {
     if (busy) return; busy = true;
     try {
-      const date = $('import-date').value, done = $('import-status').value === 'done';
-      if (!validDate(date)) throw Error('請指定有效日期。');
-      const existing = new Set(heads(state.revisions).flatMap(g => g.versions).filter(r => !r.deleted && r.date === date && r.done === done).map(r => r.text));
+      const date = $('import-date').value, endDate = $('import-end-date').value, done = $('import-status').value === 'done';
+      if (!validRange(date, endDate)) throw Error('結束日期不可早於開始日期，請指定有效日期區間。');
+      const existing = new Set(heads(state.revisions).flatMap(g => g.versions).filter(r => !r.deleted && startOf(r) === date && endOf(r) === endDate && r.done === done).map(r => r.text));
       let chunks = currentImportChunks(); const duplicate = chunks.some(t => existing.has(t)) || new Set(chunks).size !== chunks.length;
       if (duplicate) {
         const skip = await confirmAction('偵測到可能重複的工作', '要跳過相同日期、狀態及內容的重複項目，還是全部加入？', { yes: '跳過重複', no: '全部加入' });
         if (skip === null) return;
         if (skip) chunks = chunks.filter(t => { if (existing.has(t)) return false; existing.add(t); return true; });
       }
-      const revisions = chunks.map(text => makeRevision({ text, date, done })); state.revisions.push(...revisions);
+      const revisions = chunks.map(text => makeRevision({ text, date, endDate, done })); state.revisions.push(...revisions);
       await persist(); $('import-dialog').close(); render(); schedule(); notify(`已加入 ${revisions.length} 筆工作。`);
     } finally { busy = false; }
   });

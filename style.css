@@ -9,3 +9,6 @@
 .entry-notes{margin:10px 0;padding:10px 12px;background:#f5f6f0;border-left:3px solid #bdcfb7;border-radius:0 6px 6px 0}.entry-notes>span{display:block;font-size:10px;color:#6b806e;margin-bottom:5px}.entry-notes>p{margin:0;font-size:12px;color:#586c5d;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}.entry-actions{flex-wrap:wrap;max-width:150px}.entry-actions button{white-space:nowrap}#notes-work-text{max-height:150px}
 
 main>.syncbar{margin-top:24px}@media(max-width:720px){main>.syncbar{margin-top:18px}}
+
+.entry-meta{flex-wrap:wrap}#entry-form>.two-fields{margin-top:-4px}
+.two-fields{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.two-fields>div{min-width:0}.two-fields input[type=date]{max-width:100%;padding:10px 6px;font-size:12px}

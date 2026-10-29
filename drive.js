@@ -1,4 +1,4 @@
-import { validRevision, stamp, fingerprint, filename, txt, updatedFor } from './core.js?v=20261028-3';
+import { validRevision, stamp, fingerprint, filename, txt, updatedFor } from './core.js?v=20261029-1';
 
 const API = 'https://www.googleapis.com/drive/v3';
 export class Drive {

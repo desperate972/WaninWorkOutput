@@ -5,10 +5,25 @@ export function validDate(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 }
+export const startOf = r => r.startDate ?? r.date;
+export const endOf = r => r.endDate ?? startOf(r);
+export const validRange = (start, end) => validDate(start) && validDate(end) && end >= start;
+export const occursOn = (r, date) => startOf(r) <= date && date <= endOf(r);
+export const dateLabel = r => startOf(r) === endOf(r) ? startOf(r) : `${startOf(r)} ～ ${endOf(r)}`;
+export function datesOf(r) {
+  const start = startOf(r), end = endOf(r);
+  if (!validRange(start, end)) throw Error('結束日期不可早於開始日期，請填寫有效的日期區間。');
+  const dates = [], cursor = new Date(`${start}T00:00:00Z`);
+  const last = Date.parse(`${end}T00:00:00Z`);
+  while (cursor.getTime() <= last) { dates.push(cursor.toISOString().slice(0, 10)); cursor.setUTCDate(cursor.getUTCDate() + 1); }
+  return dates;
+}
+export const reportDates = revisions => [...new Set(revisions.flatMap(datesOf))].sort();
 export function validRevision(r) {
   return r && typeof r.id === 'string' && r.id.length <= 100 && typeof r.recordId === 'string' &&
     Array.isArray(r.parents) && r.parents.every(p => typeof p === 'string') && !r.parents.includes(r.id) &&
-    validDate(r.date) && typeof r.text === 'string' && r.text.length <= 1000000 &&
+    validDate(r.date) && validRange(startOf(r), endOf(r)) && r.date === startOf(r) &&
+    ((r.startDate === undefined && r.endDate === undefined) || (validDate(r.startDate) && validDate(r.endDate))) && typeof r.text === 'string' && r.text.length <= 1000000 &&
     (r.notes === undefined || (typeof r.notes === 'string' && r.notes.length <= 100000)) &&
     typeof r.done === 'boolean' && typeof r.deleted === 'boolean' &&
     (r.order === undefined || (typeof r.order === 'string' && r.order.length <= 30)) &&
@@ -29,21 +44,24 @@ export function heads(revisions) {
     conflict: versions.length > 1
   }));
 }
-export function makeRevision({ previous = [], text, date, done, deleted = false, recordId, notes = previous[0]?.notes ?? '' }) {
-  if (!validDate(date) || typeof text !== 'string' || text.length > 1000000 || (!deleted && !text.trim())) throw Error('請填寫有效日期及工作內容。');
+export function makeRevision({ previous = [], text, date, startDate, endDate, done, deleted = false, recordId, notes = previous[0]?.notes ?? '' }) {
+  const start = startDate ?? date ?? (previous[0] ? startOf(previous[0]) : undefined);
+  const end = endDate ?? (startDate === undefined && previous[0] && (date === undefined || date === startOf(previous[0])) ? endOf(previous[0]) : start);
+  if (!validRange(start, end)) throw Error('結束日期不可早於開始日期，請填寫有效的日期區間。');
+  if (typeof text !== 'string' || text.length > 1000000 || (!deleted && !text.trim())) throw Error('請填寫有效日期及工作內容。');
   if (typeof notes !== 'string' || notes.length > 100000) throw Error('備註必須是文字，且不可超過 100,000 字。');
   const now = stamp();
   return {
     id: crypto.randomUUID(), recordId: recordId || previous[0]?.recordId || crypto.randomUUID(),
-    parents: previous.map(r => r.id), text, notes, date, done: Boolean(done), deleted,
+    parents: previous.map(r => r.id), text, notes, date: start, startDate: start, endDate: end, done: Boolean(done), deleted,
     createdAt: previous[0]?.createdAt || now, updatedAt: now,
     order: previous[0]?.order || String(++entryOrder).padStart(12, '0')
   };
 }
 export function entriesFor(revisions, date, done) {
   const groups = heads(revisions);
-  if (groups.some(g => g.conflict && g.versions.some(r => r.date === date))) throw Error(`${date} 有尚未處理的不同版本，請先選擇要保留的版本。`);
-  return groups.map(g => g.versions[0]).filter(r => !r.deleted && r.date === date && r.done === done)
+  if (groups.some(g => g.conflict && g.versions.some(r => occursOn(r, date)))) throw Error(`${date} 有尚未處理的不同版本，請先選擇要保留的版本。`);
+  return groups.map(g => g.versions[0]).filter(r => !r.deleted && occursOn(r, date) && r.done === done)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || (a.order || '').localeCompare(b.order || '') || a.recordId.localeCompare(b.recordId));
 }
 export function txt(revisions, date, done) {
@@ -54,8 +72,8 @@ export function txt(revisions, date, done) {
 }
 export const filename = (date, done) => `${date}_${done ? '完成' : '未完成'}.txt`;
 export function updatedFor(revisions, date) {
-  const affected = new Set(revisions.filter(r => r.date === date).map(r => r.id));
-  return revisions.filter(r => r.date === date || r.parents.some(id => affected.has(id))).map(r => r.updatedAt).sort().at(-1) || null;
+  const affected = new Set(revisions.filter(r => occursOn(r, date)).map(r => r.id));
+  return revisions.filter(r => occursOn(r, date) || r.parents.some(id => affected.has(id))).map(r => r.updatedAt).sort().at(-1) || null;
 }
 export function splitImport(text, mode, stripNumbers) {
   const normalized = text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
