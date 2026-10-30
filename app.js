@@ -1,12 +1,12 @@
-import { today, stamp, validDate, validRevision, heads, makeRevision, txt, filename, splitImport, fingerprint, updatedFor, validateBackup, startOf, endOf, validRange, occursOn, dateLabel, datesOf, reportDates, kindOf, reportModes, reportStatus, titleOf } from './core.js?v=20261030-2';
-import { Drive } from './drive.js?v=20261030-2';
+import { today, stamp, validDate, validRevision, heads, makeRevision, txt, filename, splitImport, fingerprint, updatedFor, validateBackup, startOf, endOf, validRange, occursOn, dateLabel, datesOf, reportDates, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference } from './core.js?v=20261030-3';
+import { Drive } from './drive.js?v=20261030-3';
 const $ = id => document.getElementById(id);
 const DEFAULT = { revisions: [], uploaded: [], binding: null, reports: [], lastSync: null };
 let state, db, drive, busy = false, syncing = false, retry = 0, timer, toastTimer, editor = null, importText = '', importChunks = [], exportSnapshot = null, exportFiles = [], queryStatus = 'all', localOwner = true;
 let config = { ...window.WANIN_CONFIG };
 let previewEpoch = 0;
 let connecting = false;
-let notesEditor = null;
+let notesEditor = null, highlightedRecordId = null;
 let activeKind = 'work', exportKind = 'work', importKind = 'work';
 const kindName = kind => kind === 'note' ? '筆記' : '工作';
 const viewStates = { work: { date: '', search: '', status: 'all' }, note: { date: '', search: '', status: 'all' } };
@@ -35,12 +35,33 @@ function persist() {
   const task = writeChain.then(write); writeChain = task.catch(() => {}); return task;
 }
 function pendingCount() { const uploaded = new Set(state.uploaded); return state.revisions.filter(r => !uploaded.has(r.id)).length; }
+function linkedText(value) {
+  return referenceParts(String(value ?? '')).map(part => part.reference
+    ? `<button type="button" class="reference-link" data-reference="${escape(part.reference)}" title="跳到此編號">${escape(part.text)}</button>` : escape(part.text)).join('');
+}
+function numberMarkup(r) {
+  const number = escape(numberOf(r));
+  return `<div class="entry-number"><button type="button" class="reference-link number-badge" data-reference="${number}" aria-label="定位 ${number}">${number}</button><button type="button" class="quiet copy-number" data-copy-number="${number}" aria-label="複製編號 ${number}">複製編號</button></div>`;
+}
+function jumpToReference(number) {
+  if (busy) throw Error('正在保存，請稍候再定位。');
+  const group = findReference(state.revisions, number);
+  if (!group) { notify('找不到這個編號，請先同步資料，或確認編號是否正確。', true); return; }
+  if (!group.conflict && group.versions[0].deleted) { notify('這個編號的項目已刪除。', true); return; }
+  if ($('note-detail-dialog').open) $('note-detail-dialog').close();
+  switchKind(kindOf(group.versions[0]));
+  $('filter-date').value = ''; $('search').value = ''; queryStatus = 'all';
+  highlightedRecordId = group.recordId; render();
+  const row = [...$('entries').querySelectorAll('[data-record-id]')].find(el => el.dataset.recordId === group.recordId);
+  row?.focus({ preventScroll: true }); row?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  notify(`已定位 ${numberOf(group.versions[0])}${group.conflict ? '，此項目有不同版本待處理。' : ''}`);
+}
 function render() {
   const label = kindName(activeKind), isNote = activeKind === 'note';
   const groups = heads(state.revisions).filter(g => g.versions.some(r => kindOf(r) === activeKind));
   const date = $('filter-date').value, search = $('search').value.toLocaleLowerCase();
   const active = groups.filter(g => g.conflict || !g.versions[0].deleted);
-  const dated = active.filter(g => g.versions.some(r => (!date || occursOn(r, date)) && ((kindOf(r) === 'note' ? titleOf(r) + '\n' : '') + r.text + '\n' + (r.notes || '')).toLocaleLowerCase().includes(search)));
+  const dated = active.filter(g => g.versions.some(r => (!date || occursOn(r, date)) && (numberOf(r) + '\n' + (kindOf(r) === 'note' ? titleOf(r) + '\n' : '') + r.text + '\n' + (r.notes || '')).toLocaleLowerCase().includes(search)));
   const normal = dated.filter(g => !g.conflict);
   $('editor-title').textContent = `${editor ? '編輯' : '新增'}${label}`;
   $('list-title').textContent = `${label}清單`;
@@ -51,7 +72,7 @@ function render() {
   $('work-notes-fields').hidden = isNote; $('completion-field').hidden = isNote;
   $('status-tabs').setAttribute('aria-label', isNote ? '筆記筆數' : '完成狀態篩選');
   $('todo-tab').hidden = isNote; $('done-tab').hidden = isNote;
-  $('search').placeholder = isNote ? '搜尋筆記標題或內容' : '搜尋工作內容或備註';
+  $('search').placeholder = isNote ? '搜尋筆記標題、內容或編號' : '搜尋工作內容、備註或編號';
   $('search').setAttribute('aria-label', $('search').placeholder);
   $('empty').querySelector('p').textContent = `新增${label}，或匯入你已經寫好的 TXT。`;
   document.querySelectorAll('[data-kind]').forEach(button => {
@@ -67,15 +88,15 @@ function render() {
   $('count-all').textContent = dated.length; $('count-todo').textContent = normal.filter(g => !g.versions[0].done).length; $('count-done').textContent = normal.filter(g => g.versions[0].done).length;
   const visible = dated.filter(g => isNote || g.conflict || queryStatus === 'all' || g.versions[0].done === (queryStatus === 'done'))
     .sort((a, b) => startOf(b.versions[0]).localeCompare(startOf(a.versions[0])) || a.versions[0].createdAt.localeCompare(b.versions[0].createdAt) || (a.versions[0].order || '').localeCompare(b.versions[0].order || '') || a.recordId.localeCompare(b.recordId));
-  const notesMarkup = r => r.notes?.trim() ? `<div class="entry-notes"><span>備註</span><p>${escape(r.notes)}</p></div>` : '';
+  const notesMarkup = r => r.notes?.trim() ? `<div class="entry-notes"><span>備註</span><p>${linkedText(r.notes)}</p></div>` : '';
   $('entries').innerHTML = visible.map(g => {
-    if (g.conflict) return `<article class="entry conflict"><strong>這筆${label}有 ${g.versions.length} 個不同版本</strong><p class="hint">選擇要保留的版本。所有舊版本仍保存在完整備份。</p>${g.versions.map(r => `<div class="conflict-version">${isNote ? `<h3 class="note-heading">${escape(titleOf(r))}</h3>` : ''}<p class="entry-text">${escape(r.deleted ? '〔此版本已刪除〕\n' + r.text : r.text)}</p>${notesMarkup(r)}<div class="entry-meta">${escape(dateLabel(r))}${isNote ? '' : ` · ${r.done ? '完成' : '未完成'}`} · ${escape(formatTime(r.updatedAt))}</div><button class="secondary small" data-action="resolve" data-id="${escape(r.id)}">保留此版本${r.deleted ? '（刪除）' : ''}</button></div>`).join('')}</article>`;
+    if (g.conflict) return `<article tabindex="-1" data-record-id="${escape(g.recordId)}" class="entry conflict ${highlightedRecordId === g.recordId ? 'reference-highlight' : ''}">${numberMarkup(g.versions[0])}<strong>這筆${label}有 ${g.versions.length} 個不同版本</strong><p class="hint">選擇要保留的版本。所有舊版本仍保存在完整備份。</p>${g.versions.map(r => `<div class="conflict-version">${isNote ? `<h3 class="note-heading">${escape(titleOf(r))}</h3>` : ''}<p class="entry-text">${linkedText(r.deleted ? '〔此版本已刪除〕\n' + r.text : r.text)}</p>${notesMarkup(r)}<div class="entry-meta">${escape(dateLabel(r))}${isNote ? '' : ` · ${r.done ? '完成' : '未完成'}`} · ${escape(formatTime(r.updatedAt))}</div><button class="secondary small" data-action="resolve" data-id="${escape(r.id)}">保留此版本${r.deleted ? '（刪除）' : ''}</button></div>`).join('')}</article>`;
     const r = g.versions[0];
     const checkbox = isNote ? '' : `<input class="toggle" type="checkbox" aria-label="切換完成狀態：${escape(r.text.slice(0, 30))}" ${r.done ? 'checked' : ''} data-action="toggle" data-id="${escape(r.id)}">`;
-    const body = isNote ? `<button type="button" class="note-open" data-action="view" data-id="${escape(r.id)}" aria-label="開啟筆記：${escape(titleOf(r))}"><strong class="note-heading">${escape(titleOf(r))}</strong><span class="note-excerpt">${escape(r.text.slice(0, 180))}${r.text.length > 180 ? '…' : ''}</span><span class="note-open-hint">點擊查看全文</span></button>` : `<p class="entry-text">${escape(r.text)}</p>${notesMarkup(r)}`;
+    const body = isNote ? `<div class="note-open"><button type="button" class="note-title-button" data-action="view" data-id="${escape(r.id)}" aria-label="開啟筆記：${escape(titleOf(r))}"><strong class="note-heading">${escape(titleOf(r))}</strong></button><span class="note-excerpt">${linkedText(r.text.slice(0, 180))}${r.text.length > 180 ? '…' : ''}</span><button type="button" class="note-open-hint" data-action="view" data-id="${escape(r.id)}">點擊查看全文</button></div>` : `<p class="entry-text">${linkedText(r.text)}</p>${notesMarkup(r)}`;
     const badge = isNote ? '' : `<span class="badge ${r.done ? 'done' : ''}">${r.done ? '完成' : '未完成'}</span>`;
     const noteAction = isNote ? '' : `<button class="quiet" data-action="notes" data-id="${escape(r.id)}">${r.notes?.trim() ? '編輯備註' : '新增備註'}</button>`;
-    return `<article class="entry ${!isNote && r.done ? 'done' : ''}">${checkbox}<div class="entry-content">${body}<div class="entry-meta">${badge}<span>${escape(dateLabel(r))}</span><span>${state.uploaded.includes(r.id) ? '已同步' : '待同步'}</span></div>${isNote ? `<div class="entry-meta"><span>建立 ${escape(formatTime(r.createdAt))}</span><span>更新 ${escape(formatTime(r.updatedAt))}</span></div>` : ''}</div><div class="entry-actions">${noteAction}<button class="quiet" data-action="edit" data-id="${escape(r.id)}">編輯</button><button class="quiet" data-action="delete" data-id="${escape(r.id)}">刪除</button></div></article>`;
+    return `<article tabindex="-1" data-record-id="${escape(r.recordId)}" ${isNote ? `data-action="view" data-id="${escape(r.id)}"` : ''} class="entry ${highlightedRecordId === r.recordId ? 'reference-highlight' : ''} ${!isNote && r.done ? 'done' : ''}">${checkbox}<div class="entry-content">${numberMarkup(r)}${body}<div class="entry-meta">${badge}<span>${escape(dateLabel(r))}</span><span>${state.uploaded.includes(r.id) ? '已同步' : '待同步'}</span></div>${isNote ? `<div class="entry-meta"><span>建立 ${escape(formatTime(r.createdAt))}</span><span>更新 ${escape(formatTime(r.updatedAt))}</span></div>` : ''}</div><div class="entry-actions">${noteAction}<button class="quiet" data-action="edit" data-id="${escape(r.id)}">編輯</button><button class="quiet" data-action="delete" data-id="${escape(r.id)}">刪除</button></div></article>`;
   }).join('');
   $('empty').hidden = Boolean(visible.length); $('empty').querySelector('h3').textContent = active.length ? `沒有符合條件的${label}` : `留下第一筆${label}`;
   $('conflict-banner').hidden = !groups.some(g => g.conflict);
@@ -320,6 +341,15 @@ async function boot() {
       switchKind(kind); button.closest('[role="tablist"]').querySelector(`[data-kind="${kind}"]`).focus();
     });
   });
+  document.addEventListener('click', guard(async e => {
+    const reference = e.target.closest('[data-reference]');
+    if (reference) { jumpToReference(reference.dataset.reference); return; }
+    const copy = e.target.closest('[data-copy-number]');
+    if (copy) {
+      try { await navigator.clipboard.writeText(copy.dataset.copyNumber); notify('編號已複製，可貼到工作內容、備註或筆記內容中。'); }
+      catch { notify('瀏覽器無法存取剪貼簿，請選取畫面上的完整編號並複製。', true); }
+    }
+  }));
   $('entry-form').onsubmit = guard(async e => {
     e.preventDefault(); if (busy) return; busy = true;
     try {
@@ -330,13 +360,14 @@ async function boot() {
   for (const id of ['entry-date', 'entry-end-date', 'entry-title', 'entry-text', 'entry-notes', 'entry-done']) $(id).addEventListener('input', guard(saveDraft));
   $('cancel-edit').onclick = () => resetEditor();
   $('entries').onclick = guard(async e => {
+    if (e.target.closest('[data-reference],[data-copy-number]')) return;
     const target = e.target.closest('[data-action]'); if (!target || busy) return;
     const r = state.revisions.find(r => r.id === target.dataset.id); if (!r) return;
     const action = target.dataset.action;
     if (kindOf(r) !== activeKind || (activeKind === 'note' && ['notes', 'toggle'].includes(action))) return;
     if (action === 'view' && activeKind === 'note') {
       $('note-detail-title').textContent = titleOf(r); $('note-detail-date').textContent = dateLabel(r);
-      $('note-detail-text').textContent = r.text; $('note-detail-dialog').showModal(); return;
+      $('note-detail-number').innerHTML = numberMarkup(r); $('note-detail-text').innerHTML = linkedText(r.text); $('note-detail-dialog').showModal(); return;
     }
     if (action === 'notes') {
       if (editor?.recordId === r.recordId) { $('entry-notes').focus(); $('entry-notes').scrollIntoView({ behavior: 'smooth', block: 'center' }); notify('這筆工作正在編輯，請在備註欄位修改後儲存。'); return; }

@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRevision, heads, txt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel, kindOf, reportModes, reportStatus, titleOf } from '../core.js';
+import { makeRevision, heads, txt as numberedTxt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference } from '../core.js';
 import { Drive } from '../drive.js';
+// Existing content fixtures ignore the new identity prefix; dedicated tests below assert full numbered output.
+const withoutNumbers = text => text.replace(/(^|\r?\n)(\d+\.)\[(?:W|N)-[A-Z0-9]+\] /g, '$1$2');
+const txt = (...args) => withoutNumbers(numberedTxt(...args));
 const day = '2026-10-27';
 const create = (text = '工作 A', extra = {}) => makeRevision({ text, date: day, done: false, ...extra });
 
@@ -55,6 +58,7 @@ test('fingerprints reflect exact content', async () => { assert.equal(await fing
 class MemoryDrive extends Drive {
   constructor() { super({folderId:'root'}); this.files=[]; this.contents=new Map(); this.writes=0; }
   get connected() { return true; }
+  plainText(id) { return withoutNumbers(this.contents.get(id)); }
   async ensureFolder() { return 'data'; }
   async list(q) {
     if (q.includes("value='data-v1'")) return [{id:'data'}];
@@ -90,7 +94,7 @@ test('automatic TXT writes skip unchanged reports, manual force updates', async 
 test('TXT updates existing file id and empties a status after transition', async () => {
   const drive=new MemoryDrive(), a=create(); const files=await drive.writeReport(day,false,[a],[]);
   const b=create(a.text,{previous:[a],done:true}); const updated=await drive.writeReport(day,false,[a,b],files);
-  assert.equal(updated[0].id,files[0].id); assert.equal(drive.contents.get(files[0].id),'');
+  assert.equal(updated[0].id,files[0].id); assert.equal(drive.plainText(files[0].id),'');
 });
 test('unmanaged same-name TXT is never silently overwritten', async () => {
   const drive=new MemoryDrive(); drive.files=[{id:'external',name:filename(day,false)}];
@@ -105,7 +109,7 @@ test('duplicate report files converge without deletion', async () => {
   const files=await drive.writeReport(day,false,[a],[]);
   const duplicate={...files[0],id:'duplicate'}; drive.files.push(duplicate); drive.contents.set('duplicate','old');
   const b=create('更新',{previous:[a]}); await drive.writeReport(day,false,[a,b],drive.files);
-  assert.equal(drive.contents.get(files[0].id),'1.更新'); assert.equal(drive.contents.get('duplicate'),'1.更新'); assert.equal(drive.files.length,2);
+  assert.equal(drive.plainText(files[0].id),'1.更新'); assert.equal(drive.plainText('duplicate'),'1.更新'); assert.equal(drive.files.length,2);
 });
 
 test('batch imports retain input order even at identical timestamps', () => {
@@ -228,7 +232,7 @@ test('Drive journal transfers notes and updates TXT when only notes change', asy
   const pulled=await drive.pull(new Set()); assert.equal(pulled.fetched[0].notes,a.notes);
   let files=await drive.writeReport(day,false,[a],[]); const writes=drive.writes;
   const b=create(a.text,{previous:[a],notes:'新備註'}); files=await drive.writeReport(day,false,[a,b],files);
-  assert.equal(drive.writes,writes+1); assert.equal(drive.contents.get(files[0].id),'1.工作\r\n  備註：新備註');
+  assert.equal(drive.writes,writes+1); assert.equal(drive.plainText(files[0].id),'1.工作\r\n  備註：新備註');
 });
 
 test('same-day and legacy jobs map to one day without rewriting old versions', () => {
@@ -292,7 +296,7 @@ test('Drive writes both status files on all three days and clears shortened days
   assert.equal(drive.files.length,6);
   const b=create(a.text,{previous:[a],startDate:'2026-10-30',endDate:'2026-10-30'});
   for(const date of reportDates([a,b]))for(const done of [true,false])await drive.writeReport(date,done,[a,b],drive.files);
-  for(const f of drive.files)assert.equal(drive.contents.get(f.id), f.appProperties.date==='2026-10-30'&&f.appProperties.status==='todo'?'1.工作':'');
+  for(const f of drive.files)assert.equal(drive.plainText(f.id), f.appProperties.date==='2026-10-30'&&f.appProperties.status==='todo'?'1.工作':'');
 });
 
 test('legacy revisions remain work while notes have no completion behavior', () => {
@@ -345,16 +349,16 @@ test('Drive restores mixed backups and keeps notes TXT separate from work files'
   assert.equal(restored.filter(r=>kindOf(r)==='note').length,1);
   let reports=[];for(const mode of [true,false,'note'])reports.push(...await drive.writeReport(day,mode,restored,reports));
   assert.equal(reports.length,3);
-  assert.equal(drive.contents.get(reports.find(f=>f.appProperties.status==='note').id),'1.筆記\r\n  筆記');assert.equal(drive.contents.get(reports.find(f=>f.appProperties.status==='todo').id),'1.工作');
-  const noteUpdate=makeRevision({previous:[n],text:'更新筆記'}), todo=reports.find(f=>f.appProperties.status==='todo'), oldTodo=drive.contents.get(todo.id);
-  await drive.writeReport(day,'note',[w,n,noteUpdate],reports);assert.equal(drive.contents.get(todo.id),oldTodo);
+  assert.equal(drive.plainText(reports.find(f=>f.appProperties.status==='note').id),'1.筆記\r\n  筆記');assert.equal(drive.plainText(reports.find(f=>f.appProperties.status==='todo').id),'1.工作');
+  const noteUpdate=makeRevision({previous:[n],text:'更新筆記'}), todo=reports.find(f=>f.appProperties.status==='todo'), oldTodo=drive.plainText(todo.id);
+  await drive.writeReport(day,'note',[w,n,noteUpdate],reports);assert.equal(drive.plainText(todo.id),oldTodo);
 });
 test('shortening a note clears only its old daily note files', async () => {
   const drive=new MemoryDrive(), a=create('筆記',{kind:'note',startDate:'2026-10-30',endDate:'2026-11-01'});
   for(const date of datesOf(a))await drive.writeReport(date,'note',[a],drive.files);
   const b=makeRevision({previous:[a],text:a.text,startDate:'2026-10-31',endDate:'2026-10-31'});
   for(const date of reportDates([a,b]))await drive.writeReport(date,'note',[a,b],drive.files);
-  assert.equal(drive.files.length,3);for(const f of drive.files)assert.equal(drive.contents.get(f.id),f.appProperties.date==='2026-10-31'?'1.筆記\r\n  筆記':'');
+  assert.equal(drive.files.length,3);for(const f of drive.files)assert.equal(drive.plainText(f.id),f.appProperties.date==='2026-10-31'?'1.筆記\r\n  筆記':'');
 });
 
 test('legacy notebook derives its first nonempty line without changing original content', () => {
@@ -384,5 +388,42 @@ test('Drive and JSON backup preserve title and refresh TXT for title-only edit',
   const {fetched}=await drive.pull(new Set());const restored=validateBackup(JSON.parse(JSON.stringify({format:'wanin-backup-v1',revisions:fetched})));
   assert.equal(restored[0].title,'標題');let reports=await drive.writeReport(day,'note',restored,[]), writes=drive.writes;
   const b=makeRevision({previous:[a],text:a.text,title:'更新標題'});await drive.writeReport(day,'note',[a,b],reports);
-  assert.equal(drive.writes,writes+1);assert.equal(drive.contents.get(reports[0].id),'1.更新標題\r\n  內文');
+  assert.equal(drive.writes,writes+1);assert.equal(drive.plainText(reports[0].id),'1.更新標題\r\n  內文');
+});
+
+test('fixed numbers are identical across revisions, date changes, completion and deletion', () => {
+  const a=create('工作'), b=create('編輯',{previous:[a],date:'2026-11-01',done:true}), c=create(b.text,{previous:[b],deleted:true}), n=create('筆記',{kind:'note'});
+  assert.match(numberOf(a),/^W-[A-F0-9]{32}$/);assert.match(numberOf(n),/^N-[A-F0-9]{32}$/);
+  assert.equal(numberOf(a),numberOf(b));assert.equal(numberOf(a),numberOf(c));assert.notEqual(numberOf(a),numberOf(create('新工作')));
+});
+test('legacy numbers are deterministic without modifying immutable revisions or depending on record order', () => {
+  const a=create('工作');delete a.kind;const before=JSON.stringify(a), other=create('另一台裝置');
+  assert.equal(numberOf(JSON.parse(before)),numberOf(a));assert.equal(numberOf(a),numberOf([...heads([other,a])].find(g=>g.recordId===a.recordId).versions[0]));
+  assert.equal(JSON.stringify(a),before); assert.notEqual(numberOf({...a,recordId:'ABC'}),numberOf({...a,recordId:'abc'}));
+  assert.notEqual(numberOf({...a,recordId:'測試'}),numberOf({...a,recordId:'測試2'}));
+});
+test('TXT includes fixed numbers alongside daily numbering and preserves referenced content', () => {
+  const a=create('工作',{recordId:'12345678-1234-4234-8234-123456789abc'}), n=create('接續 '+numberOf(a)+'\n第二行',{kind:'note',title:'討論'});
+  assert.equal(numberedTxt([a,n],day,false),'1.[W-12345678123442348234123456789ABC] 工作');
+  assert.equal(numberedTxt([a,n],day,'note'),`1.[${numberOf(n)}] 討論\r\n  接續 ${numberOf(a)}\r\n  第二行`);
+});
+test('references work with Chinese punctuation, lowercase, repeated references and missing items', () => {
+  const w=create(), n=create('筆記',{kind:'note'}), text=`接續${numberOf(w)}，參考（${numberOf(n).toLowerCase()}）。${numberOf(w)}`;
+  const parts=referenceParts(text);assert.equal(parts.map(p=>p.text).join(''),text);
+  assert.deepEqual(parts.filter(p=>p.reference).map(p=>p.reference),[numberOf(w),numberOf(n),numberOf(w)]);
+  assert.equal(findReference([n,w],numberOf(w).toLowerCase()).recordId,w.recordId); assert.equal(findReference([],numberOf(w)),null);
+  assert.equal(referenceParts('AW-'+numberOf(w).slice(2)).some(p=>p.reference),false);
+  assert.equal(referenceParts(numberOf(w)+'BAD').some(p=>p.reference),false);
+});
+test('reference lookup identifies deleted and conflicting records without renumbering', () => {
+  const a=create(), b=create(a.text,{previous:[a],deleted:true}), c=create('手機',{previous:[a]});
+  assert.equal(findReference([a,b],numberOf(a)).versions[0].deleted,true);
+  assert.equal(findReference([a,b,c],numberOf(a)).conflict,true);
+});
+test('Drive and backup retain identities and references across devices and duplicate restores', async () => {
+  const drive=new MemoryDrive(), w=create('工作'), n=create('接續 '+numberOf(w),{kind:'note',title:'討論'});
+  await drive.push(w);await drive.push(n);const {fetched}=await drive.pull(new Set());
+  const restored=validateBackup(JSON.parse(JSON.stringify({format:'wanin-backup-v1',revisions:fetched})));
+  assert.equal(numberOf(restored.find(r=>r.recordId===w.recordId)),numberOf(w));assert.equal(findReference(restored,numberOf(w)).recordId,w.recordId);
+  const files=await drive.writeReport(day,'note',restored,[]);assert.equal(drive.contents.get(files[0].id),`1.[${numberOf(n)}] 討論\r\n  接續 ${numberOf(w)}`);
 });

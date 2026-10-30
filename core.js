@@ -6,6 +6,27 @@ export function validDate(value) {
     !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 }
 export const kindOf = r => r.kind ?? 'work';
+// Derive from immutable record identity so offline devices need no shared counter or migration.
+export function numberOf(r) {
+  const id = r.recordId;
+  const token = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)
+    ? id.replaceAll('-', '').toUpperCase()
+    : 'X' + [...new TextEncoder().encode(id)].map(b => b.toString(16).padStart(2, '0')).join('').toUpperCase();
+  return `${kindOf(r) === 'note' ? 'N' : 'W'}-${token}`;
+}
+export function referenceParts(text) {
+  const parts = [], pattern = /(?<![A-Za-z0-9_-])(?:W|N)-(?:[0-9A-F]{32}|X(?:[0-9A-F]{2})+)(?![A-Za-z0-9_-])/gi;
+  let end = 0;
+  for (const match of text.matchAll(pattern)) {
+    if (match.index > end) parts.push({ text: text.slice(end, match.index) });
+    parts.push({ text: match[0], reference: match[0].toUpperCase() }); end = match.index + match[0].length;
+  }
+  if (end < text.length) parts.push({ text: text.slice(end) });
+  return parts;
+}
+export function findReference(revisions, number) {
+  return heads(revisions).find(g => g.versions.some(r => numberOf(r) === number.toUpperCase())) || null;
+}
 export const titleOf = r => r.title?.trim() || r.text.split(/\r\n?|\n/).find(line => line.trim())?.trim() || '未命名筆記';
 export const reportModes = kind => kind === 'note' ? ['note'] : [true, false];
 export const reportStatus = mode => mode === 'note' ? 'note' : mode ? 'done' : 'todo';
@@ -74,9 +95,9 @@ export function entriesFor(revisions, date, done) {
 }
 export function txt(revisions, date, done) {
   return entriesFor(revisions, date, done).map((r, i) => {
-    if (kindOf(r) === 'note') return `${i + 1}.${titleOf(r)}\r\n  ${r.text.replace(/\r\n?|\n/g, '\r\n  ')}`;
+    if (kindOf(r) === 'note') return `${i + 1}.[${numberOf(r)}] ${titleOf(r)}\r\n  ${r.text.replace(/\r\n?|\n/g, '\r\n  ')}`;
     const note = r.notes?.trim() ? `\r\n  備註：${r.notes.replace(/\r\n?|\n/g, '\r\n        ')}` : '';
-    return `${i + 1}.${r.text}${note}`;
+    return `${i + 1}.[${numberOf(r)}] ${r.text}${note}`;
   }).join('\r\n');
 }
 export const filename = (date, done) => `${date}_${done === 'note' ? '筆記' : done ? '完成' : '未完成'}.txt`;

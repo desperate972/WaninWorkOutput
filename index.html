@@ -4,8 +4,8 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#1d6554"><meta name="description" content="記下每天的工作，跨裝置同步並輸出純文字紀錄。">
   <title>日常工作簿 · Wanin</title>
-  <link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261030-2">
-  <script src="./config.js"></script><script type="module" src="./app.js?v=20261030-2"></script>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261030-3">
+  <script src="./config.js"></script><script type="module" src="./app.js?v=20261030-3"></script>
 </head>
 <body>
   <header class="topbar"><a class="brand" href="./"><span class="brand-icon">W</span><span>日常工作簿<small>WANIN WORK OUTPUT</small></span></a>
@@ -20,6 +20,7 @@
             <div id="note-title-field" hidden><label for="entry-title">筆記標題</label><input id="entry-title" maxlength="1000000" placeholder="為這筆筆記取個標題"></div>
             <label for="entry-text" id="content-label">工作內容</label><textarea id="entry-text" rows="7" maxlength="1000000" placeholder="記下一件工作，不需要自己加編號。" required></textarea>
             <div id="work-notes-fields"><label for="entry-notes">備註（選填）</label><textarea id="entry-notes" rows="3" maxlength="100000" placeholder="補充進度、討論結果或待確認事項，不會改動工作原文。"></textarea></div>
+            <p class="hint">可將項目的「複製編號」貼入內容或備註；儲存後點擊編號即可定位。</p>
             <div class="field-row"><label class="check-label" id="completion-field"><input id="entry-done" type="checkbox">這項工作已完成</label><span id="draft-note" class="muted" role="status"></span></div>
             <button class="primary wide" type="submit" id="save-entry">＋ 新增工作</button><button id="cancel-edit" class="quiet wide" type="button" hidden>取消編輯</button>
           </form></section>
@@ -36,7 +37,7 @@
         <footer class="list-footer"><span id="list-summary">共 0 筆工作</span><span id="export-status" role="status">TXT 尚未更新</span></footer>
       </section>
     </div>
-    <footer class="page-footer">日常工作簿 <span>原文記錄 · 日期分類 · 純文字輸出 · v2026.10.30.2</span></footer>
+    <footer class="page-footer">日常工作簿 <span>原文記錄 · 日期分類 · 純文字輸出 · v2026.10.30.3</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
   <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>Google Drive 連線設定</h2><button type="button" class="icon close-dialog" aria-label="關閉">×</button></div>
@@ -60,7 +61,7 @@
     <label for="export-date">輸出日期</label><input id="export-date" type="date"><p id="export-cloud-note" class="hint"></p><div id="export-comparison"></div>
     <div class="dialog-actions"><button class="quiet close-dialog">取消</button><button id="download-txt" class="secondary">下載兩份 TXT</button><button id="upload-txt" class="primary">確認上傳 Drive</button></div><p class="hint">也可用各份預覽下的按鈕單獨下載，避免 Chrome 阻擋多檔下載。未完成同步的其他裝置內容不會出現在本次輸出。</p>
   </dialog>
-  <dialog id="note-detail-dialog" aria-labelledby="note-detail-title"><div class="dialog-heading"><h2 id="note-detail-title"></h2><button type="button" class="icon close-dialog" aria-label="關閉">×</button></div><p id="note-detail-date" class="hint"></p><div id="note-detail-text" class="note-full-text"></div><div class="dialog-actions"><button type="button" class="secondary close-dialog">關閉</button></div></dialog>
+  <dialog id="note-detail-dialog" aria-labelledby="note-detail-title"><div class="dialog-heading"><h2 id="note-detail-title"></h2><button type="button" class="icon close-dialog" aria-label="關閉">×</button></div><div id="note-detail-number"></div><p id="note-detail-date" class="hint"></p><div id="note-detail-text" class="note-full-text"></div><div class="dialog-actions"><button type="button" class="secondary close-dialog">關閉</button></div></dialog>
   <dialog id="notes-dialog"><form id="notes-form"><div class="dialog-heading"><h2>編輯備註</h2><button type="button" class="icon close-dialog" aria-label="關閉">×</button></div>
     <label>工作內容</label><p id="notes-work-text" class="preview"></p>
     <label for="notes-text">備註內容</label><textarea id="notes-text" rows="6" maxlength="100000" placeholder="新增補充說明，或清空以移除備註。"></textarea>
