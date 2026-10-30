@@ -4,8 +4,8 @@
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#1d6554"><meta name="description" content="記下每天的工作，跨裝置同步並輸出純文字紀錄。">
   <title>日常工作簿 · Wanin</title>
-  <link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261029-1">
-  <script src="./config.js"></script><script type="module" src="./app.js?v=20261029-1"></script>
+  <link rel="icon" href="./icon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css?v=20261030-1">
+  <script src="./config.js"></script><script type="module" src="./app.js?v=20261030-1"></script>
 </head>
 <body>
   <header class="topbar"><a class="brand" href="./"><span class="brand-icon">W</span><span>日常工作簿<small>WANIN WORK OUTPUT</small></span></a>
@@ -15,25 +15,27 @@
     <div class="workspace">
       <aside>
         <section class="panel compose"><div class="section-heading"><h2 id="editor-title">新增工作</h2><span class="muted">01 / 記錄</span></div>
-          <form id="entry-form"><div class="two-fields"><div><label for="entry-date">開始日期</label><input id="entry-date" type="date" required></div><div><label for="entry-end-date">結束日期</label><input id="entry-end-date" type="date" required></div></div>
-            <label for="entry-text">工作內容</label><textarea id="entry-text" rows="7" maxlength="1000000" placeholder="記下一件工作，不需要自己加編號。" required></textarea>
-            <label for="entry-notes">備註（選填）</label><textarea id="entry-notes" rows="3" maxlength="100000" placeholder="補充進度、討論結果或待確認事項，不會改動工作原文。"></textarea>
-            <div class="field-row"><label class="check-label"><input id="entry-done" type="checkbox">這項工作已完成</label><span id="draft-note" class="muted" role="status"></span></div>
+          <div class="kind-tabs" role="tablist" aria-label="新增內容類型"><button id="compose-work-tab" type="button" role="tab" data-kind="work" aria-controls="entry-form" aria-selected="true">工作</button><button id="compose-note-tab" type="button" role="tab" data-kind="note" aria-controls="entry-form" aria-selected="false" tabindex="-1">筆記</button></div>
+          <form id="entry-form" role="tabpanel" aria-labelledby="compose-work-tab"><div class="two-fields"><div><label for="entry-date">開始日期</label><input id="entry-date" type="date" required></div><div><label for="entry-end-date">結束日期</label><input id="entry-end-date" type="date" required></div></div>
+            <label for="entry-text" id="content-label">工作內容</label><textarea id="entry-text" rows="7" maxlength="1000000" placeholder="記下一件工作，不需要自己加編號。" required></textarea>
+            <div id="work-notes-fields"><label for="entry-notes">備註（選填）</label><textarea id="entry-notes" rows="3" maxlength="100000" placeholder="補充進度、討論結果或待確認事項，不會改動工作原文。"></textarea></div>
+            <div class="field-row"><label class="check-label" id="completion-field"><input id="entry-done" type="checkbox">這項工作已完成</label><span id="draft-note" class="muted" role="status"></span></div>
             <button class="primary wide" type="submit" id="save-entry">＋ 新增工作</button><button id="cancel-edit" class="quiet wide" type="button" hidden>取消編輯</button>
           </form></section>
         <section class="panel files-panel"><h2>帶入與備份</h2><p>匯入文字加入清單；完整備份可保留每筆日期與狀態。</p><button id="import-button" class="secondary wide">↥ 匯入 TXT</button><div class="backup-actions"><button id="backup-button" class="quiet">下載完整備份</button><button id="restore-button" class="quiet">還原備份</button></div><input id="restore-file" type="file" accept=".json,application/json" hidden></section>
         <p class="aside-note">自動同步需要網頁保持開啟、連線及 Google 授權有效。離線時先保存在本地。</p>
       </aside>
-      <section class="panel list-panel"><div class="section-heading"><h2>工作清單</h2><span class="muted">02 / 回顧</span></div>
+      <section class="panel list-panel"><div class="section-heading"><h2 id="list-title">工作清單</h2><span class="muted">02 / 回顧</span></div>
+        <div class="kind-tabs" role="tablist" aria-label="清單內容類型"><button id="list-work-tab" type="button" role="tab" data-kind="work" aria-controls="entries" aria-selected="true">工作</button><button id="list-note-tab" type="button" role="tab" data-kind="note" aria-controls="entries" aria-selected="false" tabindex="-1">筆記</button></div>
         <div class="toolbar"><div class="date-filter"><label for="filter-date">查看日期</label><input id="filter-date" type="date" autocomplete="off"><button id="today-button" class="quiet">今天</button><button id="all-dates" class="quiet">所有日期</button><span id="date-range-label" class="muted" role="status">顯示範圍：所有日期</span></div><button id="export-button" class="primary">↧ 輸出 TXT</button></div>
         <label class="search-wrap"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="搜尋工作內容或備註" aria-label="搜尋工作內容或備註"></label>
-        <div class="tabs" role="group" aria-label="完成狀態篩選"><button class="tab active" data-status="all">全部 <span id="count-all">0</span></button><button class="tab" data-status="todo">未完成 <span id="count-todo">0</span></button><button class="tab" data-status="done">已完成 <span id="count-done">0</span></button></div>
+        <div id="status-tabs" class="tabs" role="group" aria-label="完成狀態篩選"><button class="tab active" data-status="all">全部 <span id="count-all">0</span></button><button class="tab" data-status="todo" id="todo-tab">未完成 <span id="count-todo">0</span></button><button class="tab" data-status="done" id="done-tab">已完成 <span id="count-done">0</span></button></div>
         <div id="conflict-banner" class="warning" hidden>有不同裝置的修改版本，請先選擇要保留的內容，再更新該日期的 TXT。</div>
-        <div id="entries"></div><div id="empty" class="empty"><span aria-hidden="true">☷</span><h3>為今天留下第一筆紀錄</h3><p>新增工作，或匯入你已經寫好的 TXT。</p></div>
+        <div id="entries" role="tabpanel" aria-labelledby="list-work-tab"></div><div id="empty" class="empty"><span aria-hidden="true">☷</span><h3>為今天留下第一筆紀錄</h3><p>新增工作，或匯入你已經寫好的 TXT。</p></div>
         <footer class="list-footer"><span id="list-summary">共 0 筆工作</span><span id="export-status" role="status">TXT 尚未更新</span></footer>
       </section>
     </div>
-    <footer class="page-footer">日常工作簿 <span>原文記錄 · 日期分類 · 純文字輸出 · v2026.10.29.1</span></footer>
+    <footer class="page-footer">日常工作簿 <span>原文記錄 · 日期分類 · 純文字輸出 · v2026.10.30.1</span></footer>
   </main>
   <div id="toast" role="status" hidden></div>
   <dialog id="settings-dialog"><form id="settings-form"><div class="dialog-heading"><h2>Google Drive 連線設定</h2><button type="button" class="icon close-dialog" aria-label="關閉">×</button></div>
@@ -45,15 +47,15 @@
     <p class="hint">首次存取時選取資料夾授權，之後按「立即同步」即可沿用原資料夾；只有存取權失效時才需重選。Google 權杖只保存在記憶體，重新開啟或過期後需再次連接。</p>
     <p><a href="./SETUP.html" target="_blank" rel="noopener">查看免費設定教學 ↗</a></p><div class="dialog-actions"><button type="button" id="disconnect-button" class="quiet">中斷連線</button><button type="submit" class="primary">儲存設定</button></div>
   </form></dialog>
-  <dialog id="import-dialog"><div class="dialog-heading"><h2>匯入 TXT</h2><button class="icon close-dialog" aria-label="關閉">×</button></div>
+  <dialog id="import-dialog"><div class="dialog-heading"><h2 id="import-title">匯入工作 TXT</h2><button class="icon close-dialog" aria-label="關閉">×</button></div>
     <label for="import-file">選擇文字檔</label><input id="import-file" type="file" accept=".txt,text/plain">
     <label for="import-encoding">文字編碼</label><select id="import-encoding"><option value="utf-8">UTF-8</option><option value="big5">Big5（舊版中文 TXT）</option><option value="utf-16le">UTF-16 LE</option><option value="utf-16be">UTF-16 BE</option></select>
-    <div class="two-fields"><div><label for="import-date">開始日期</label><input type="date" id="import-date" required></div><div><label for="import-end-date">結束日期</label><input type="date" id="import-end-date" required></div></div><div><label for="import-status">完成狀態</label><select id="import-status"><option value="todo">未完成</option><option value="done">完成</option></select></div>
+    <div class="two-fields"><div><label for="import-date">開始日期</label><input type="date" id="import-date" required></div><div><label for="import-end-date">結束日期</label><input type="date" id="import-end-date" required></div></div><div id="import-completion-field"><label for="import-status">完成狀態</label><select id="import-status"><option value="todo">未完成</option><option value="done">完成</option></select></div>
     <label for="import-mode">如何拆分</label><select id="import-mode"><option value="whole">整份作為一筆（保留換行）</option><option value="lines">每個非空白行作為一筆</option></select>
     <label class="check-label"><input id="strip-numbers" type="checkbox">移除每筆開頭已有的數字編號</label><label for="import-preview">預覽</label><pre id="import-preview" class="preview">請先選擇 TXT 檔案。</pre><p id="import-summary" class="hint"></p>
     <div class="dialog-actions"><button class="quiet close-dialog">取消</button><button id="confirm-import" class="primary" disabled>確認加入清單</button></div>
   </dialog>
-  <dialog id="export-dialog"><div class="dialog-heading"><h2>確認輸出 TXT</h2><button class="icon close-dialog" aria-label="關閉">×</button></div><p>比較本次內容與雲端檔案後，再確認輸出。時間皆為台灣時間。</p>
+  <dialog id="export-dialog"><div class="dialog-heading"><h2 id="export-title">確認輸出工作 TXT</h2><button class="icon close-dialog" aria-label="關閉">×</button></div><p>比較本次內容與雲端檔案後，再確認輸出。時間皆為台灣時間。</p>
     <label for="export-date">輸出日期</label><input id="export-date" type="date"><p id="export-cloud-note" class="hint"></p><div id="export-comparison"></div>
     <div class="dialog-actions"><button class="quiet close-dialog">取消</button><button id="download-txt" class="secondary">下載兩份 TXT</button><button id="upload-txt" class="primary">確認上傳 Drive</button></div><p class="hint">也可用各份預覽下的按鈕單獨下載，避免 Chrome 阻擋多檔下載。未完成同步的其他裝置內容不會出現在本次輸出。</p>
   </dialog>

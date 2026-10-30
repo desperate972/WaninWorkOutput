@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRevision, heads, txt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel } from '../core.js';
+import { makeRevision, heads, txt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel, kindOf, reportModes, reportStatus } from '../core.js';
 import { Drive } from '../drive.js';
 const day = '2026-10-27';
 const create = (text = '工作 A', extra = {}) => makeRevision({ text, date: day, done: false, ...extra });
@@ -293,4 +293,66 @@ test('Drive writes both status files on all three days and clears shortened days
   const b=create(a.text,{previous:[a],startDate:'2026-10-30',endDate:'2026-10-30'});
   for(const date of reportDates([a,b]))for(const done of [true,false])await drive.writeReport(date,done,[a,b],drive.files);
   for(const f of drive.files)assert.equal(drive.contents.get(f.id), f.appProperties.date==='2026-10-30'&&f.appProperties.status==='todo'?'1.工作':'');
+});
+
+test('legacy revisions remain work while notes have no completion behavior', () => {
+  const work=create('工作'); delete work.kind;
+  const note=create('筆記',{kind:'note',done:true});
+  assert.equal(kindOf(work),'work'); assert.equal(kindOf(note),'note'); assert.equal(note.done,false);
+  assert.deepEqual(reportModes('work'),[true,false]); assert.deepEqual(reportModes('note'),['note']); assert.equal(reportStatus('note'),'note');
+  assert.equal(validateBackup({format:'wanin-backup-v1',revisions:[work,note]}).length,2);
+});
+test('work and notes never enter each others TXT reports', () => {
+  const todo=create('未完成工作'), done=create('完成工作',{done:true}), note=create('獨立筆記',{kind:'note'});
+  assert.equal(txt([todo,done,note],day,false),'1.未完成工作');assert.equal(txt([todo,done,note],day,true),'1.完成工作');assert.equal(txt([todo,done,note],day,'note'),'1.獨立筆記');
+  assert.equal(filename(day,'note'),'2026-10-27_筆記.txt');
+});
+test('notes appear on all days of a range and disappear outside it', () => {
+  const note=create('三日筆記',{kind:'note',startDate:'2026-10-30',endDate:'2026-11-01'});
+  for(const date of datesOf(note))assert.equal(txt([note],date,'note'),'1.三日筆記');
+  assert.equal(txt([note],'2026-10-29','note'),'');assert.equal(txt([note],'2026-11-02','note'),'');
+});
+test('note edits and deletion preserve type and do not create work entries', () => {
+  const a=create('原筆記',{kind:'note',startDate:'2026-10-30',endDate:'2026-11-01'});
+  const b=makeRevision({previous:[a],text:'更新筆記',done:true});
+  assert.equal(b.kind,'note');assert.equal(b.done,false);assert.equal(endOf(b),endOf(a));
+  const c=makeRevision({previous:[b],text:b.text,deleted:true});
+  for(const date of datesOf(a)){assert.equal(txt([a,b],date,false),'');assert.equal(txt([a,b],date,'note'),'1.更新筆記');assert.equal(txt([a,b,c],date,'note'),'');}
+});
+test('note conflicts block only note reports, not work reports on the same day', () => {
+  const w=create('正常工作'), a=create('筆記',{kind:'note'}), b=makeRevision({previous:[a],text:'手機版本'}), c=makeRevision({previous:[a],text:'電腦版本'});
+  assert.equal(txt([w,a,b,c],day,false),'1.正常工作');assert.throws(()=>txt([w,a,b,c],day,'note'),/不同版本/);
+  const d=makeRevision({previous:[b,c],text:c.text}); assert.equal(txt([w,a,b,c,d],day,'note'),'1.電腦版本');
+});
+test('work conflicts do not block unrelated note reports', () => {
+  const a=create('工作'), b=create('A',{previous:[a]}), c=create('B',{previous:[a]}), n=create('筆記',{kind:'note'});
+  assert.equal(txt([a,b,c,n],day,'note'),'1.筆記');assert.throws(()=>txt([a,b,c,n],day,false),/不同版本/);
+});
+test('updated timestamps stay independent between work and notes', () => {
+  const w=create('工作'), n=create('筆記',{kind:'note'});w.updatedAt='2026-10-27T01:00:00Z';n.updatedAt='2026-10-27T02:00:00Z';
+  assert.equal(updatedFor([w,n],day),w.updatedAt);assert.equal(updatedFor([w,n],day,'note'),n.updatedAt);
+});
+test('types cannot be changed or mixed in a revision chain or backup', () => {
+  const a=create('工作');assert.throws(()=>makeRevision({previous:[a],text:a.text,kind:'note'}),/類型/);
+  const b=create('修改',{previous:[a]});
+  assert.throws(()=>validateBackup({format:'wanin-backup-v1',revisions:[a,{...b,kind:'note'}]}),/版本關係/);
+  assert.throws(()=>validateBackup({format:'wanin-backup-v1',revisions:[{...a,kind:'invalid'}]}),/格式/);
+});
+test('Drive restores mixed backups and keeps notes TXT separate from work files', async () => {
+  const drive=new MemoryDrive(), w=create('工作'), n=create('筆記',{kind:'note'});
+  await drive.push(w);await drive.push(n);
+  const pulled=await drive.pull(new Set());const restored=validateBackup(JSON.parse(JSON.stringify({format:'wanin-backup-v1',revisions:pulled.fetched})));
+  assert.equal(restored.filter(r=>kindOf(r)==='note').length,1);
+  let reports=[];for(const mode of [true,false,'note'])reports.push(...await drive.writeReport(day,mode,restored,reports));
+  assert.equal(reports.length,3);
+  assert.equal(drive.contents.get(reports.find(f=>f.appProperties.status==='note').id),'1.筆記');assert.equal(drive.contents.get(reports.find(f=>f.appProperties.status==='todo').id),'1.工作');
+  const noteUpdate=makeRevision({previous:[n],text:'更新筆記'}), todo=reports.find(f=>f.appProperties.status==='todo'), oldTodo=drive.contents.get(todo.id);
+  await drive.writeReport(day,'note',[w,n,noteUpdate],reports);assert.equal(drive.contents.get(todo.id),oldTodo);
+});
+test('shortening a note clears only its old daily note files', async () => {
+  const drive=new MemoryDrive(), a=create('筆記',{kind:'note',startDate:'2026-10-30',endDate:'2026-11-01'});
+  for(const date of datesOf(a))await drive.writeReport(date,'note',[a],drive.files);
+  const b=makeRevision({previous:[a],text:a.text,startDate:'2026-10-31',endDate:'2026-10-31'});
+  for(const date of reportDates([a,b]))await drive.writeReport(date,'note',[a,b],drive.files);
+  assert.equal(drive.files.length,3);for(const f of drive.files)assert.equal(drive.contents.get(f.id),f.appProperties.date==='2026-10-31'?'1.筆記':'');
 });

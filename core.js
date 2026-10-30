@@ -5,6 +5,9 @@ export function validDate(value) {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) &&
     !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 }
+export const kindOf = r => r.kind ?? 'work';
+export const reportModes = kind => kind === 'note' ? ['note'] : [true, false];
+export const reportStatus = mode => mode === 'note' ? 'note' : mode ? 'done' : 'todo';
 export const startOf = r => r.startDate ?? r.date;
 export const endOf = r => r.endDate ?? startOf(r);
 export const validRange = (start, end) => validDate(start) && validDate(end) && end >= start;
@@ -20,7 +23,7 @@ export function datesOf(r) {
 }
 export const reportDates = revisions => [...new Set(revisions.flatMap(datesOf))].sort();
 export function validRevision(r) {
-  return r && typeof r.id === 'string' && r.id.length <= 100 && typeof r.recordId === 'string' &&
+  return r && (r.kind === undefined || r.kind === 'work' || r.kind === 'note') && typeof r.id === 'string' && r.id.length <= 100 && typeof r.recordId === 'string' &&
     Array.isArray(r.parents) && r.parents.every(p => typeof p === 'string') && !r.parents.includes(r.id) &&
     validDate(r.date) && validRange(startOf(r), endOf(r)) && r.date === startOf(r) &&
     ((r.startDate === undefined && r.endDate === undefined) || (validDate(r.startDate) && validDate(r.endDate))) && typeof r.text === 'string' && r.text.length <= 1000000 &&
@@ -44,24 +47,26 @@ export function heads(revisions) {
     conflict: versions.length > 1
   }));
 }
-export function makeRevision({ previous = [], text, date, startDate, endDate, done, deleted = false, recordId, notes = previous[0]?.notes ?? '' }) {
+export function makeRevision({ previous = [], text, date, startDate, endDate, done, deleted = false, recordId, kind = previous[0] ? kindOf(previous[0]) : 'work', notes = previous[0]?.notes ?? '' }) {
+  if (!['work', 'note'].includes(kind) || previous.some(r => kindOf(r) !== kind)) throw Error('項目類型不可在工作與筆記之間變更。');
   const start = startDate ?? date ?? (previous[0] ? startOf(previous[0]) : undefined);
   const end = endDate ?? (startDate === undefined && previous[0] && (date === undefined || date === startOf(previous[0])) ? endOf(previous[0]) : start);
   if (!validRange(start, end)) throw Error('結束日期不可早於開始日期，請填寫有效的日期區間。');
-  if (typeof text !== 'string' || text.length > 1000000 || (!deleted && !text.trim())) throw Error('請填寫有效日期及工作內容。');
+  if (typeof text !== 'string' || text.length > 1000000 || (!deleted && !text.trim())) throw Error('請填寫有效日期及項目內容。');
   if (typeof notes !== 'string' || notes.length > 100000) throw Error('備註必須是文字，且不可超過 100,000 字。');
   const now = stamp();
   return {
     id: crypto.randomUUID(), recordId: recordId || previous[0]?.recordId || crypto.randomUUID(),
-    parents: previous.map(r => r.id), text, notes, date: start, startDate: start, endDate: end, done: Boolean(done), deleted,
+    parents: previous.map(r => r.id), text, notes, kind, date: start, startDate: start, endDate: end, done: kind === 'note' ? false : Boolean(done), deleted,
     createdAt: previous[0]?.createdAt || now, updatedAt: now,
     order: previous[0]?.order || String(++entryOrder).padStart(12, '0')
   };
 }
 export function entriesFor(revisions, date, done) {
-  const groups = heads(revisions);
+  const kind = done === 'note' ? 'note' : 'work';
+  const groups = heads(revisions).filter(g => g.versions.some(r => kindOf(r) === kind));
   if (groups.some(g => g.conflict && g.versions.some(r => occursOn(r, date)))) throw Error(`${date} 有尚未處理的不同版本，請先選擇要保留的版本。`);
-  return groups.map(g => g.versions[0]).filter(r => !r.deleted && occursOn(r, date) && r.done === done)
+  return groups.map(g => g.versions[0]).filter(r => !r.deleted && occursOn(r, date) && (kind === 'note' || r.done === done))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || (a.order || '').localeCompare(b.order || '') || a.recordId.localeCompare(b.recordId));
 }
 export function txt(revisions, date, done) {
@@ -70,8 +75,9 @@ export function txt(revisions, date, done) {
     return `${i + 1}.${r.text}${note}`;
   }).join('\r\n');
 }
-export const filename = (date, done) => `${date}_${done ? '完成' : '未完成'}.txt`;
-export function updatedFor(revisions, date) {
+export const filename = (date, done) => `${date}_${done === 'note' ? '筆記' : done ? '完成' : '未完成'}.txt`;
+export function updatedFor(revisions, date, kind = 'work') {
+  revisions = revisions.filter(r => kindOf(r) === kind);
   const affected = new Set(revisions.filter(r => occursOn(r, date)).map(r => r.id));
   return revisions.filter(r => occursOn(r, date) || r.parents.some(id => affected.has(id))).map(r => r.updatedAt).sort().at(-1) || null;
 }
@@ -93,7 +99,7 @@ export function validateBackup(data) {
   for (const r of data.revisions) {
     if (ids.has(r.id)) throw Error('備份包含重複版本識別碼。');
     ids.add(r.id);
-    for (const p of r.parents) if (!byId.has(p) || byId.get(p).recordId !== r.recordId) throw Error('備份缺少原始版本或版本關係錯誤。');
+    for (const p of r.parents) if (!byId.has(p) || byId.get(p).recordId !== r.recordId || kindOf(byId.get(p)) !== kindOf(r)) throw Error('備份缺少原始版本或版本關係錯誤。');
   }
   const visiting = new Set(), visited = new Set();
   function visit(r) {

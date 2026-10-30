@@ -1,4 +1,4 @@
-import { validRevision, stamp, fingerprint, filename, txt, updatedFor } from './core.js?v=20261029-1';
+import { validRevision, stamp, fingerprint, filename, txt, updatedFor, reportStatus } from './core.js?v=20261030-1';
 
 const API = 'https://www.googleapis.com/drive/v3';
 export class Drive {
@@ -110,9 +110,9 @@ export class Drive {
   async writeReport(date, done, revisions, files, force = false) {
     const content = txt(revisions, date, done);
     const hash = await fingerprint(content);
-    const status = done ? 'done' : 'todo';
+    const status = reportStatus(done);
     const matching = files.filter(f => f.appProperties?.date === date && f.appProperties?.status === status);
-    const props = { wanin: 'txt-v1', date, status, hash, contentUpdatedAt: updatedFor(revisions, date) || '', generatedAt: stamp() };
+    const props = { wanin: 'txt-v1', date, status, hash, contentUpdatedAt: updatedFor(revisions, date, done === 'note' ? 'note' : 'work') || '', generatedAt: stamp() };
     const results = [];
     if (!matching.length) {
       // Never overwrite an unrelated same-name user file silently.

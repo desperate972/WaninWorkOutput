@@ -12,3 +12,5 @@ main>.syncbar{margin-top:24px}@media(max-width:720px){main>.syncbar{margin-top:1
 
 .entry-meta{flex-wrap:wrap}#entry-form>.two-fields{margin-top:-4px}
 .two-fields{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}.two-fields>div{min-width:0}.two-fields input[type=date]{max-width:100%;padding:10px 6px;font-size:12px}
+
+.kind-tabs{display:flex;gap:4px;padding:4px;background:#f1f4ed;border:1px solid var(--line);border-radius:10px;margin-bottom:20px}.kind-tabs>[role=tab]{flex:1;background:transparent;color:#60766a;font-size:13px;padding:9px 12px}.kind-tabs>[aria-selected=true]{background:var(--green);color:white;box-shadow:0 1px 4px #183d2520}
