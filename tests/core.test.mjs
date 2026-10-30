@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRevision, heads, txt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel, kindOf, reportModes, reportStatus } from '../core.js';
+import { makeRevision, heads, txt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel, kindOf, reportModes, reportStatus, titleOf } from '../core.js';
 import { Drive } from '../drive.js';
 const day = '2026-10-27';
 const create = (text = '工作 A', extra = {}) => makeRevision({ text, date: day, done: false, ...extra });
@@ -304,12 +304,12 @@ test('legacy revisions remain work while notes have no completion behavior', () 
 });
 test('work and notes never enter each others TXT reports', () => {
   const todo=create('未完成工作'), done=create('完成工作',{done:true}), note=create('獨立筆記',{kind:'note'});
-  assert.equal(txt([todo,done,note],day,false),'1.未完成工作');assert.equal(txt([todo,done,note],day,true),'1.完成工作');assert.equal(txt([todo,done,note],day,'note'),'1.獨立筆記');
+  assert.equal(txt([todo,done,note],day,false),'1.未完成工作');assert.equal(txt([todo,done,note],day,true),'1.完成工作');assert.equal(txt([todo,done,note],day,'note'),'1.獨立筆記\r\n  獨立筆記');
   assert.equal(filename(day,'note'),'2026-10-27_筆記.txt');
 });
 test('notes appear on all days of a range and disappear outside it', () => {
   const note=create('三日筆記',{kind:'note',startDate:'2026-10-30',endDate:'2026-11-01'});
-  for(const date of datesOf(note))assert.equal(txt([note],date,'note'),'1.三日筆記');
+  for(const date of datesOf(note))assert.equal(txt([note],date,'note'),'1.三日筆記\r\n  三日筆記');
   assert.equal(txt([note],'2026-10-29','note'),'');assert.equal(txt([note],'2026-11-02','note'),'');
 });
 test('note edits and deletion preserve type and do not create work entries', () => {
@@ -317,16 +317,16 @@ test('note edits and deletion preserve type and do not create work entries', () 
   const b=makeRevision({previous:[a],text:'更新筆記',done:true});
   assert.equal(b.kind,'note');assert.equal(b.done,false);assert.equal(endOf(b),endOf(a));
   const c=makeRevision({previous:[b],text:b.text,deleted:true});
-  for(const date of datesOf(a)){assert.equal(txt([a,b],date,false),'');assert.equal(txt([a,b],date,'note'),'1.更新筆記');assert.equal(txt([a,b,c],date,'note'),'');}
+  for(const date of datesOf(a)){assert.equal(txt([a,b],date,false),'');assert.equal(txt([a,b],date,'note'),'1.更新筆記\r\n  更新筆記');assert.equal(txt([a,b,c],date,'note'),'');}
 });
 test('note conflicts block only note reports, not work reports on the same day', () => {
   const w=create('正常工作'), a=create('筆記',{kind:'note'}), b=makeRevision({previous:[a],text:'手機版本'}), c=makeRevision({previous:[a],text:'電腦版本'});
   assert.equal(txt([w,a,b,c],day,false),'1.正常工作');assert.throws(()=>txt([w,a,b,c],day,'note'),/不同版本/);
-  const d=makeRevision({previous:[b,c],text:c.text}); assert.equal(txt([w,a,b,c,d],day,'note'),'1.電腦版本');
+  const d=makeRevision({previous:[b,c],text:c.text}); assert.equal(txt([w,a,b,c,d],day,'note'),'1.電腦版本\r\n  電腦版本');
 });
 test('work conflicts do not block unrelated note reports', () => {
   const a=create('工作'), b=create('A',{previous:[a]}), c=create('B',{previous:[a]}), n=create('筆記',{kind:'note'});
-  assert.equal(txt([a,b,c,n],day,'note'),'1.筆記');assert.throws(()=>txt([a,b,c,n],day,false),/不同版本/);
+  assert.equal(txt([a,b,c,n],day,'note'),'1.筆記\r\n  筆記');assert.throws(()=>txt([a,b,c,n],day,false),/不同版本/);
 });
 test('updated timestamps stay independent between work and notes', () => {
   const w=create('工作'), n=create('筆記',{kind:'note'});w.updatedAt='2026-10-27T01:00:00Z';n.updatedAt='2026-10-27T02:00:00Z';
@@ -345,7 +345,7 @@ test('Drive restores mixed backups and keeps notes TXT separate from work files'
   assert.equal(restored.filter(r=>kindOf(r)==='note').length,1);
   let reports=[];for(const mode of [true,false,'note'])reports.push(...await drive.writeReport(day,mode,restored,reports));
   assert.equal(reports.length,3);
-  assert.equal(drive.contents.get(reports.find(f=>f.appProperties.status==='note').id),'1.筆記');assert.equal(drive.contents.get(reports.find(f=>f.appProperties.status==='todo').id),'1.工作');
+  assert.equal(drive.contents.get(reports.find(f=>f.appProperties.status==='note').id),'1.筆記\r\n  筆記');assert.equal(drive.contents.get(reports.find(f=>f.appProperties.status==='todo').id),'1.工作');
   const noteUpdate=makeRevision({previous:[n],text:'更新筆記'}), todo=reports.find(f=>f.appProperties.status==='todo'), oldTodo=drive.contents.get(todo.id);
   await drive.writeReport(day,'note',[w,n,noteUpdate],reports);assert.equal(drive.contents.get(todo.id),oldTodo);
 });
@@ -354,5 +354,35 @@ test('shortening a note clears only its old daily note files', async () => {
   for(const date of datesOf(a))await drive.writeReport(date,'note',[a],drive.files);
   const b=makeRevision({previous:[a],text:a.text,startDate:'2026-10-31',endDate:'2026-10-31'});
   for(const date of reportDates([a,b]))await drive.writeReport(date,'note',[a,b],drive.files);
-  assert.equal(drive.files.length,3);for(const f of drive.files)assert.equal(drive.contents.get(f.id),f.appProperties.date==='2026-10-31'?'1.筆記':'');
+  assert.equal(drive.files.length,3);for(const f of drive.files)assert.equal(drive.contents.get(f.id),f.appProperties.date==='2026-10-31'?'1.筆記\r\n  筆記':'');
+});
+
+test('legacy notebook derives its first nonempty line without changing original content', () => {
+  const n=create('\n  舊標題  \n完整內文',{kind:'note'}), before=JSON.stringify(n);
+  assert.equal(titleOf(n),'舊標題'); assert.equal(JSON.stringify(n),before);
+  assert.equal(txt([n],day,'note'),'1.舊標題\r\n  \r\n    舊標題  \r\n  完整內文');
+});
+test('notebook title outputs above intact multiline text on every day', () => {
+  const n=create('第一行\n第二行  ',{kind:'note',title:'  討論標題  ',startDate:'2026-10-30',endDate:'2026-11-01'});
+  assert.equal(n.title,'討論標題');for(const d of datesOf(n))assert.equal(txt([n],d,'note'),'1.討論標題\r\n  第一行\r\n  第二行  ');
+  const b=makeRevision({previous:[n],text:n.text,title:'新標題'}), c=makeRevision({previous:[b],text:b.text,deleted:true});
+  assert.equal(c.title,'新標題'); assert.equal(txt([n,b],startOf(n),'note'),'1.新標題\r\n  第一行\r\n  第二行  ');
+});
+test('invalid titles cannot enter revisions or backups', () => {
+  for(const title of ['', '   ', 42, null]) {
+    assert.throws(()=>create('內文',{kind:'note',title}),/標題/);
+    assert.throws(()=>validateBackup({format:'wanin-backup-v1',revisions:[{...create('內文',{kind:'note'}),title}]}),/格式/);
+  }
+});
+test('title-only concurrent changes retain separate versions and chosen title', () => {
+  const a=create('內文',{kind:'note',title:'原標題'}), b=makeRevision({previous:[a],text:a.text,title:'電腦標題'}), c=makeRevision({previous:[a],text:a.text,title:'手機標題'});
+  assert.throws(()=>txt([a,b,c],day,'note'),/不同版本/);
+  const chosen=makeRevision({previous:[b,c],text:c.text,title:c.title});assert.equal(txt([a,b,c,chosen],day,'note'),'1.手機標題\r\n  內文');
+});
+test('Drive and JSON backup preserve title and refresh TXT for title-only edit', async () => {
+  const drive=new MemoryDrive(), a=create('內文',{kind:'note',title:'標題'});await drive.push(a);
+  const {fetched}=await drive.pull(new Set());const restored=validateBackup(JSON.parse(JSON.stringify({format:'wanin-backup-v1',revisions:fetched})));
+  assert.equal(restored[0].title,'標題');let reports=await drive.writeReport(day,'note',restored,[]), writes=drive.writes;
+  const b=makeRevision({previous:[a],text:a.text,title:'更新標題'});await drive.writeReport(day,'note',[a,b],reports);
+  assert.equal(drive.writes,writes+1);assert.equal(drive.contents.get(reports[0].id),'1.更新標題\r\n  內文');
 });

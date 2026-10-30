@@ -6,6 +6,7 @@ export function validDate(value) {
     !Number.isNaN(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
 }
 export const kindOf = r => r.kind ?? 'work';
+export const titleOf = r => r.title?.trim() || r.text.split(/\r\n?|\n/).find(line => line.trim())?.trim() || '未命名筆記';
 export const reportModes = kind => kind === 'note' ? ['note'] : [true, false];
 export const reportStatus = mode => mode === 'note' ? 'note' : mode ? 'done' : 'todo';
 export const startOf = r => r.startDate ?? r.date;
@@ -27,6 +28,7 @@ export function validRevision(r) {
     Array.isArray(r.parents) && r.parents.every(p => typeof p === 'string') && !r.parents.includes(r.id) &&
     validDate(r.date) && validRange(startOf(r), endOf(r)) && r.date === startOf(r) &&
     ((r.startDate === undefined && r.endDate === undefined) || (validDate(r.startDate) && validDate(r.endDate))) && typeof r.text === 'string' && r.text.length <= 1000000 &&
+    (r.title === undefined || (typeof r.title === 'string' && r.title.length <= 1000000 && Boolean(r.title.trim()))) &&
     (r.notes === undefined || (typeof r.notes === 'string' && r.notes.length <= 100000)) &&
     typeof r.done === 'boolean' && typeof r.deleted === 'boolean' &&
     (r.order === undefined || (typeof r.order === 'string' && r.order.length <= 30)) &&
@@ -47,17 +49,18 @@ export function heads(revisions) {
     conflict: versions.length > 1
   }));
 }
-export function makeRevision({ previous = [], text, date, startDate, endDate, done, deleted = false, recordId, kind = previous[0] ? kindOf(previous[0]) : 'work', notes = previous[0]?.notes ?? '' }) {
+export function makeRevision({ previous = [], text, title = previous[0]?.title, date, startDate, endDate, done, deleted = false, recordId, kind = previous[0] ? kindOf(previous[0]) : 'work', notes = previous[0]?.notes ?? '' }) {
   if (!['work', 'note'].includes(kind) || previous.some(r => kindOf(r) !== kind)) throw Error('項目類型不可在工作與筆記之間變更。');
   const start = startDate ?? date ?? (previous[0] ? startOf(previous[0]) : undefined);
   const end = endDate ?? (startDate === undefined && previous[0] && (date === undefined || date === startOf(previous[0])) ? endOf(previous[0]) : start);
   if (!validRange(start, end)) throw Error('結束日期不可早於開始日期，請填寫有效的日期區間。');
   if (typeof text !== 'string' || text.length > 1000000 || (!deleted && !text.trim())) throw Error('請填寫有效日期及項目內容。');
   if (typeof notes !== 'string' || notes.length > 100000) throw Error('備註必須是文字，且不可超過 100,000 字。');
+  if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 1000000)) throw Error('請填寫筆記標題。');
   const now = stamp();
   return {
     id: crypto.randomUUID(), recordId: recordId || previous[0]?.recordId || crypto.randomUUID(),
-    parents: previous.map(r => r.id), text, notes, kind, date: start, startDate: start, endDate: end, done: kind === 'note' ? false : Boolean(done), deleted,
+    parents: previous.map(r => r.id), text, notes, kind, ...(kind === 'note' && title !== undefined ? { title: title.trim() } : {}), date: start, startDate: start, endDate: end, done: kind === 'note' ? false : Boolean(done), deleted,
     createdAt: previous[0]?.createdAt || now, updatedAt: now,
     order: previous[0]?.order || String(++entryOrder).padStart(12, '0')
   };
@@ -71,6 +74,7 @@ export function entriesFor(revisions, date, done) {
 }
 export function txt(revisions, date, done) {
   return entriesFor(revisions, date, done).map((r, i) => {
+    if (kindOf(r) === 'note') return `${i + 1}.${titleOf(r)}\r\n  ${r.text.replace(/\r\n?|\n/g, '\r\n  ')}`;
     const note = r.notes?.trim() ? `\r\n  備註：${r.notes.replace(/\r\n?|\n/g, '\r\n        ')}` : '';
     return `${i + 1}.${r.text}${note}`;
   }).join('\r\n');
