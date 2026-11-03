@@ -1,5 +1,5 @@
-import { today, stamp, validDate, validRevision, heads, makeRevision, txt, filename, splitImport, fingerprint, updatedFor, validateBackup, startOf, endOf, validRange, occursOn, dateLabel, datesOf, reportDates, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference } from './core.js?v=20261030-3';
-import { Drive } from './drive.js?v=20261030-3';
+import { today, stamp, validDate, validRevision, heads, makeRevision, txt, filename, splitImport, fingerprint, updatedFor, validateBackup, startOf, endOf, validRange, occursOn, dateLabel, datesOf, reportDates, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference, hasDraftInput, draftDates } from './core.js?v=20261103-1';
+import { Drive } from './drive.js?v=20261103-1';
 const $ = id => document.getElementById(id);
 const DEFAULT = { revisions: [], uploaded: [], binding: null, reports: [], lastSync: null };
 let state, db, drive, busy = false, syncing = false, retry = 0, timer, toastTimer, editor = null, importText = '', importChunks = [], exportSnapshot = null, exportFiles = [], queryStatus = 'all', localOwner = true;
@@ -7,6 +7,7 @@ let config = { ...window.WANIN_CONFIG };
 let previewEpoch = 0;
 let connecting = false;
 let notesEditor = null, highlightedRecordId = null;
+let datesEdited = false, dateTimer;
 let activeKind = 'work', exportKind = 'work', importKind = 'work';
 const kindName = kind => kind === 'note' ? '筆記' : '工作';
 const viewStates = { work: { date: '', search: '', status: 'all' }, note: { date: '', search: '', status: 'all' } };
@@ -113,27 +114,46 @@ function updateDateLimits() {
   $('import-end-date').min = $('import-date').value;
 }
 function draftKey(kind) { return `wanin-draft-${kind}`; }
+function currentDraft() {
+  return { text: $('entry-text').value, title: activeKind === 'note' ? $('entry-title').value : undefined, notes: activeKind === 'work' ? $('entry-notes').value : '', date: $('entry-date').value, endDate: $('entry-end-date').value, done: activeKind === 'work' && $('entry-done').checked, datesEdited, editor };
+}
+function refreshDefaultDates() {
+  if (busy || hasDraftInput(currentDraft())) return;
+  const day = today();
+  $('entry-date').value = $('entry-end-date').value = day; updateDateLimits();
+}
+function watchDateChange() {
+  clearTimeout(dateTimer); refreshDefaultDates();
+  // Taiwan is UTC+8 without daylight saving. Re-arm after wake, focus and every midnight.
+  const now = Date.now(), day = today(new Date(now));
+  const nextMidnight = Date.parse(`${day}T00:00:00+08:00`) + 86400000;
+  dateTimer = setTimeout(watchDateChange, Math.max(1000, nextMidnight - now + 100));
+}
 function resetEditor() {
   editor = null; $('entry-title').value = ''; $('entry-text').value = ''; $('entry-notes').value = ''; $('entry-done').checked = false;
   $('cancel-edit').hidden = true; localStorage.removeItem(draftKey(activeKind));
   if (activeKind === 'work') localStorage.removeItem('wanin-draft');
+  datesEdited = false; $('entry-date').value = $('entry-end-date').value = today(); updateDateLimits();
   $('draft-note').textContent = ''; render();
 }
 function saveDraft() {
   updateDateLimits();
-  localStorage.setItem(draftKey(activeKind), JSON.stringify({ text: $('entry-text').value, title: activeKind === 'note' ? $('entry-title').value : undefined, notes: activeKind === 'work' ? $('entry-notes').value : '', date: $('entry-date').value, endDate: $('entry-end-date').value, done: activeKind === 'work' && $('entry-done').checked, editor }));
+  const draft = currentDraft();
+  if (hasDraftInput(draft)) localStorage.setItem(draftKey(activeKind), JSON.stringify(draft));
+  else { localStorage.removeItem(draftKey(activeKind)); refreshDefaultDates(); }
   if (activeKind === 'work') localStorage.removeItem('wanin-draft');
-  $('draft-note').textContent = '草稿已存本地';
+  $('draft-note').textContent = hasDraftInput(draft) ? '草稿已存本地' : '';
 }
 function loadDraft() {
   const draft = storageGet(draftKey(activeKind), activeKind === 'work' ? storageGet('wanin-draft', null) : null);
   editor = draft?.editor && kindOf(draft.editor) === activeKind && state.revisions.some(r => r.id === draft.editor.id) ? draft.editor : null;
   $('entry-title').value = draft?.title ?? (editor ? titleOf(editor) : '');
   $('entry-text').value = draft?.text || ''; $('entry-notes').value = draft?.notes ?? editor?.notes ?? '';
-  $('entry-date').value = validDate(draft?.date) ? draft.date : today();
-  $('entry-end-date').value = validDate(draft?.endDate) ? draft.endDate : editor ? endOf(editor) : $('entry-date').value;
+  datesEdited = Boolean(draft?.datesEdited);
+  const dates = draftDates(draft ? { ...draft, editor } : null);
+  $('entry-date').value = dates.start; $('entry-end-date').value = dates.end;
   $('entry-done').checked = activeKind === 'work' && Boolean(draft?.done);
-  $('cancel-edit').hidden = !editor; $('draft-note').textContent = draft ? '已還原本地草稿' : '';
+  $('cancel-edit').hidden = !editor; $('draft-note').textContent = hasDraftInput(draft) ? '已還原本地草稿' : '';
   updateDateLimits();
 }
 function switchKind(kind) {
@@ -357,7 +377,7 @@ async function boot() {
       await addRevision(revision); resetEditor(); notify(`${kindName(activeKind)}已保存在本地。`);
     } finally { busy = false; }
   });
-  for (const id of ['entry-date', 'entry-end-date', 'entry-title', 'entry-text', 'entry-notes', 'entry-done']) $(id).addEventListener('input', guard(saveDraft));
+  for (const id of ['entry-date', 'entry-end-date', 'entry-title', 'entry-text', 'entry-notes', 'entry-done']) $(id).addEventListener('input', guard(() => { if (['entry-date', 'entry-end-date'].includes(id)) datesEdited = true; saveDraft(); }));
   $('cancel-edit').onclick = () => resetEditor();
   $('entries').onclick = guard(async e => {
     if (e.target.closest('[data-reference],[data-copy-number]')) return;
@@ -472,7 +492,9 @@ async function boot() {
   });
   $('upload-txt').onclick = guard(manualUpload);
   window.addEventListener('online', () => schedule(1000)); window.addEventListener('offline', () => status('目前離線', '內容會保存在本地，連線後再同步。'));
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) schedule(1000); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { watchDateChange(); schedule(1000); } });
+  window.addEventListener('focus', watchDateChange); window.addEventListener('pageshow', watchDateChange);
+  watchDateChange();
   window.addEventListener('beforeunload', e => { if (syncing) { e.preventDefault(); e.returnValue = ''; } });
   render(); status('已存本地', `${pendingCount()} 個版本待同步；連接 Google Drive 後自動同步。`);
 }

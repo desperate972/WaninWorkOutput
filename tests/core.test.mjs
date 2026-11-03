@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRevision, heads, txt as numberedTxt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference } from '../core.js';
+import { makeRevision, heads, txt as numberedTxt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference, today, hasDraftInput, draftDates } from '../core.js';
 import { Drive } from '../drive.js';
 // Existing content fixtures ignore the new identity prefix; dedicated tests below assert full numbered output.
 const withoutNumbers = text => text.replace(/(^|\r?\n)(\d+\.)\[(?:W|N)-[A-Z0-9]+\] /g, '$1$2');
@@ -426,4 +426,27 @@ test('Drive and backup retain identities and references across devices and dupli
   const restored=validateBackup(JSON.parse(JSON.stringify({format:'wanin-backup-v1',revisions:fetched})));
   assert.equal(numberOf(restored.find(r=>r.recordId===w.recordId)),numberOf(w));assert.equal(findReference(restored,numberOf(w)).recordId,w.recordId);
   const files=await drive.writeReport(day,'note',restored,[]);assert.equal(drive.contents.get(files[0].id),`1.[${numberOf(n)}] 討論\r\n  接續 ${numberOf(w)}`);
+});
+
+test('default day follows Taiwan midnight even while UTC is still on the previous date', () => {
+  assert.equal(today(new Date('2026-11-02T15:59:59Z')),'2026-11-02');
+  assert.equal(today(new Date('2026-11-02T16:00:00Z')),'2026-11-03');
+});
+test('empty work and note drafts never carry yesterday dates into a new entry', () => {
+  const day='2026-11-03';
+  for(const draft of [null, {}, {text:'',notes:'',done:false,date:'2026-11-02',endDate:'2026-11-05'}, {text:'',title:'',date:'2026-11-02',endDate:'2026-11-02'}]) {
+    assert.equal(hasDraftInput(draft),false);assert.deepEqual(draftDates(draft,day),{start:day,end:day});
+  }
+});
+test('typed content, title, notes and manual date selections preserve draft ranges over midnight', () => {
+  for(const content of [{text:'工作草稿'}, {title:'筆記標題草稿'}, {notes:'備註草稿'}, {done:true}, {datesEdited:true}, {text:' '}]) {
+    const draft={...content,date:'2026-11-01',endDate:'2026-11-05'};
+    assert.equal(hasDraftInput(draft),true);assert.deepEqual(draftDates(draft,'2026-11-03'),{start:'2026-11-01',end:'2026-11-05'});
+    assert.deepEqual(draftDates(JSON.parse(JSON.stringify(draft)),'2026-11-04'),{start:'2026-11-01',end:'2026-11-05'});
+  }
+});
+test('editing an existing item retains its dates independently of the new-entry default', () => {
+  const editor=create('既有項目',{startDate:'2026-10-29',endDate:'2026-10-31'});
+  assert.deepEqual(draftDates({editor},'2026-11-03'),{start:'2026-10-29',end:'2026-10-31'});
+  assert.deepEqual(draftDates({editor,date:'2026-10-28',endDate:'2026-11-01'},'2026-11-03'),{start:'2026-10-28',end:'2026-11-01'});
 });

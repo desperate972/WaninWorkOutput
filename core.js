@@ -1,4 +1,4 @@
-export const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Taipei' }).format(new Date());
+export const today = (now = new Date()) => new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Taipei' }).format(now);
 export const stamp = () => new Date().toISOString();
 let entryOrder = 0;
 export function validDate(value) {
@@ -33,6 +33,13 @@ export const reportStatus = mode => mode === 'note' ? 'note' : mode ? 'done' : '
 export const startOf = r => r.startDate ?? r.date;
 export const endOf = r => r.endDate ?? startOf(r);
 export const validRange = (start, end) => validDate(start) && validDate(end) && end >= start;
+export const hasDraftInput = draft => Boolean(draft && (draft.editor || draft.datesEdited || draft.text || draft.title || draft.notes || draft.done));
+export function draftDates(draft, day = today()) {
+  if (!hasDraftInput(draft)) return { start: day, end: day };
+  const start = validDate(draft.date) ? draft.date : draft.editor ? startOf(draft.editor) : day;
+  const end = validDate(draft.endDate) ? draft.endDate : draft.editor ? endOf(draft.editor) : start;
+  return { start, end };
+}
 export const occursOn = (r, date) => startOf(r) <= date && date <= endOf(r);
 export const dateLabel = r => startOf(r) === endOf(r) ? startOf(r) : `${startOf(r)} ～ ${endOf(r)}`;
 export function datesOf(r) {
