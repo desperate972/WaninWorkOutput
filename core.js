@@ -33,7 +33,14 @@ export const reportStatus = mode => mode === 'note' ? 'note' : mode ? 'done' : '
 export const startOf = r => r.startDate ?? r.date;
 export const endOf = r => r.endDate ?? startOf(r);
 export const validRange = (start, end) => validDate(start) && validDate(end) && end >= start;
-export const hasDraftInput = draft => Boolean(draft && (draft.editor || draft.datesEdited || draft.text || draft.title || draft.notes || draft.done));
+export const hasDraftInput = draft => Boolean(draft && (draft.editor || draft.datesEdited || draft.text || draft.title || draft.notes || draft.done || draft.priority));
+export const validPriority = value => value === null || (Number.isSafeInteger(value) && value >= 1);
+export function compareListEntries(a, b) {
+  const ap = a.priority ?? Infinity, bp = b.priority ?? Infinity;
+  if (ap !== bp) return ap < bp ? -1 : 1;
+  return startOf(b).localeCompare(startOf(a)) || Date.parse(b.createdAt) - Date.parse(a.createdAt) ||
+    (b.order || '').localeCompare(a.order || '') || a.recordId.localeCompare(b.recordId);
+}
 export function draftDates(draft, day = today()) {
   if (!hasDraftInput(draft)) return { start: day, end: day };
   const start = validDate(draft.date) ? draft.date : draft.editor ? startOf(draft.editor) : day;
@@ -57,6 +64,7 @@ export function validRevision(r) {
     validDate(r.date) && validRange(startOf(r), endOf(r)) && r.date === startOf(r) &&
     ((r.startDate === undefined && r.endDate === undefined) || (validDate(r.startDate) && validDate(r.endDate))) && typeof r.text === 'string' && r.text.length <= 1000000 &&
     (r.title === undefined || (typeof r.title === 'string' && r.title.length <= 1000000 && Boolean(r.title.trim()))) &&
+    (r.priority === undefined || validPriority(r.priority)) &&
     (r.notes === undefined || (typeof r.notes === 'string' && r.notes.length <= 100000)) &&
     typeof r.done === 'boolean' && typeof r.deleted === 'boolean' &&
     (r.order === undefined || (typeof r.order === 'string' && r.order.length <= 30)) &&
@@ -77,18 +85,19 @@ export function heads(revisions) {
     conflict: versions.length > 1
   }));
 }
-export function makeRevision({ previous = [], text, title = previous[0]?.title, date, startDate, endDate, done, deleted = false, recordId, kind = previous[0] ? kindOf(previous[0]) : 'work', notes = previous[0]?.notes ?? '' }) {
+export function makeRevision({ previous = [], text, title = previous[0]?.title, priority = previous[0]?.priority ?? null, date, startDate, endDate, done, deleted = false, recordId, kind = previous[0] ? kindOf(previous[0]) : 'work', notes = previous[0]?.notes ?? '' }) {
   if (!['work', 'note'].includes(kind) || previous.some(r => kindOf(r) !== kind)) throw Error('項目類型不可在工作與筆記之間變更。');
   const start = startDate ?? date ?? (previous[0] ? startOf(previous[0]) : undefined);
   const end = endDate ?? (startDate === undefined && previous[0] && (date === undefined || date === startOf(previous[0])) ? endOf(previous[0]) : start);
   if (!validRange(start, end)) throw Error('結束日期不可早於開始日期，請填寫有效的日期區間。');
   if (typeof text !== 'string' || text.length > 1000000 || (!deleted && !text.trim())) throw Error('請填寫有效日期及項目內容。');
   if (typeof notes !== 'string' || notes.length > 100000) throw Error('備註必須是文字，且不可超過 100,000 字。');
+  if (!validPriority(priority)) throw Error('優先順序請填寫大於或等於 1 的整數，或清空表示未指定。');
   if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 1000000)) throw Error('請填寫筆記標題。');
   const now = stamp();
   return {
     id: crypto.randomUUID(), recordId: recordId || previous[0]?.recordId || crypto.randomUUID(),
-    parents: previous.map(r => r.id), text, notes, kind, ...(kind === 'note' && title !== undefined ? { title: title.trim() } : {}), date: start, startDate: start, endDate: end, done: kind === 'note' ? false : Boolean(done), deleted,
+    parents: previous.map(r => r.id), text, notes, priority, kind, ...(kind === 'note' && title !== undefined ? { title: title.trim() } : {}), date: start, startDate: start, endDate: end, done: kind === 'note' ? false : Boolean(done), deleted,
     createdAt: previous[0]?.createdAt || now, updatedAt: now,
     order: previous[0]?.order || String(++entryOrder).padStart(12, '0')
   };

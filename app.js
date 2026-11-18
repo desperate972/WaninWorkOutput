@@ -1,5 +1,5 @@
-import { today, stamp, validDate, validRevision, heads, makeRevision, txt, filename, splitImport, fingerprint, updatedFor, validateBackup, startOf, endOf, validRange, occursOn, dateLabel, datesOf, reportDates, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference, hasDraftInput, draftDates } from './core.js?v=20261103-1';
-import { Drive } from './drive.js?v=20261103-1';
+import { today, stamp, validDate, validRevision, heads, makeRevision, txt, filename, splitImport, fingerprint, updatedFor, validateBackup, startOf, endOf, validRange, occursOn, dateLabel, datesOf, reportDates, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference, hasDraftInput, draftDates, compareListEntries } from './core.js?v=20261118-1';
+import { Drive } from './drive.js?v=20261118-1';
 const $ = id => document.getElementById(id);
 const DEFAULT = { revisions: [], uploaded: [], binding: null, reports: [], lastSync: null };
 let state, db, drive, busy = false, syncing = false, retry = 0, timer, toastTimer, editor = null, importText = '', importChunks = [], exportSnapshot = null, exportFiles = [], queryStatus = 'all', localOwner = true;
@@ -40,9 +40,10 @@ function linkedText(value) {
   return referenceParts(String(value ?? '')).map(part => part.reference
     ? `<button type="button" class="reference-link" data-reference="${escape(part.reference)}" title="跳到此編號">${escape(part.text)}</button>` : escape(part.text)).join('');
 }
+function priorityMarkup(r) { return r.priority == null ? '' : `<span class="priority-badge">優先 ${escape(r.priority)}</span>`; }
 function numberMarkup(r) {
   const number = escape(numberOf(r));
-  return `<div class="entry-number"><button type="button" class="reference-link number-badge" data-reference="${number}" aria-label="定位 ${number}">${number}</button><button type="button" class="quiet copy-number" data-copy-number="${number}" aria-label="複製編號 ${number}">複製編號</button></div>`;
+  return `<div class="entry-number">${priorityMarkup(r)}<button type="button" class="reference-link number-badge" data-reference="${number}" aria-label="定位 ${number}">${number}</button><button type="button" class="quiet copy-number" data-copy-number="${number}" aria-label="複製編號 ${number}">複製編號</button></div>`;
 }
 function jumpToReference(number) {
   if (busy) throw Error('正在保存，請稍候再定位。');
@@ -88,10 +89,10 @@ function render() {
   $('today-button').setAttribute('aria-pressed', String(date === today()));
   $('count-all').textContent = dated.length; $('count-todo').textContent = normal.filter(g => !g.versions[0].done).length; $('count-done').textContent = normal.filter(g => g.versions[0].done).length;
   const visible = dated.filter(g => isNote || g.conflict || queryStatus === 'all' || g.versions[0].done === (queryStatus === 'done'))
-    .sort((a, b) => startOf(b.versions[0]).localeCompare(startOf(a.versions[0])) || a.versions[0].createdAt.localeCompare(b.versions[0].createdAt) || (a.versions[0].order || '').localeCompare(b.versions[0].order || '') || a.recordId.localeCompare(b.recordId));
+    .sort((a, b) => compareListEntries(a.versions[0], b.versions[0]));
   const notesMarkup = r => r.notes?.trim() ? `<div class="entry-notes"><span>備註</span><p>${linkedText(r.notes)}</p></div>` : '';
   $('entries').innerHTML = visible.map(g => {
-    if (g.conflict) return `<article tabindex="-1" data-record-id="${escape(g.recordId)}" class="entry conflict ${highlightedRecordId === g.recordId ? 'reference-highlight' : ''}">${numberMarkup(g.versions[0])}<strong>這筆${label}有 ${g.versions.length} 個不同版本</strong><p class="hint">選擇要保留的版本。所有舊版本仍保存在完整備份。</p>${g.versions.map(r => `<div class="conflict-version">${isNote ? `<h3 class="note-heading">${escape(titleOf(r))}</h3>` : ''}<p class="entry-text">${linkedText(r.deleted ? '〔此版本已刪除〕\n' + r.text : r.text)}</p>${notesMarkup(r)}<div class="entry-meta">${escape(dateLabel(r))}${isNote ? '' : ` · ${r.done ? '完成' : '未完成'}`} · ${escape(formatTime(r.updatedAt))}</div><button class="secondary small" data-action="resolve" data-id="${escape(r.id)}">保留此版本${r.deleted ? '（刪除）' : ''}</button></div>`).join('')}</article>`;
+    if (g.conflict) return `<article tabindex="-1" data-record-id="${escape(g.recordId)}" class="entry conflict ${highlightedRecordId === g.recordId ? 'reference-highlight' : ''}">${numberMarkup(g.versions[0])}<strong>這筆${label}有 ${g.versions.length} 個不同版本</strong><p class="hint">選擇要保留的版本。所有舊版本仍保存在完整備份。</p>${g.versions.map(r => `<div class="conflict-version">${priorityMarkup(r)}${isNote ? `<h3 class="note-heading">${escape(titleOf(r))}</h3>` : ''}<p class="entry-text">${linkedText(r.deleted ? '〔此版本已刪除〕\n' + r.text : r.text)}</p>${notesMarkup(r)}<div class="entry-meta">${escape(dateLabel(r))}${isNote ? '' : ` · ${r.done ? '完成' : '未完成'}`} · ${escape(formatTime(r.updatedAt))}</div><button class="secondary small" data-action="resolve" data-id="${escape(r.id)}">保留此版本${r.deleted ? '（刪除）' : ''}</button></div>`).join('')}</article>`;
     const r = g.versions[0];
     const checkbox = isNote ? '' : `<input class="toggle" type="checkbox" aria-label="切換完成狀態：${escape(r.text.slice(0, 30))}" ${r.done ? 'checked' : ''} data-action="toggle" data-id="${escape(r.id)}">`;
     const body = isNote ? `<div class="note-open"><button type="button" class="note-title-button" data-action="view" data-id="${escape(r.id)}" aria-label="開啟筆記：${escape(titleOf(r))}"><strong class="note-heading">${escape(titleOf(r))}</strong></button><span class="note-excerpt">${linkedText(r.text.slice(0, 180))}${r.text.length > 180 ? '…' : ''}</span><button type="button" class="note-open-hint" data-action="view" data-id="${escape(r.id)}">點擊查看全文</button></div>` : `<p class="entry-text">${linkedText(r.text)}</p>${notesMarkup(r)}`;
@@ -115,7 +116,7 @@ function updateDateLimits() {
 }
 function draftKey(kind) { return `wanin-draft-${kind}`; }
 function currentDraft() {
-  return { text: $('entry-text').value, title: activeKind === 'note' ? $('entry-title').value : undefined, notes: activeKind === 'work' ? $('entry-notes').value : '', date: $('entry-date').value, endDate: $('entry-end-date').value, done: activeKind === 'work' && $('entry-done').checked, datesEdited, editor };
+  return { priority: $('entry-priority').value, text: $('entry-text').value, title: activeKind === 'note' ? $('entry-title').value : undefined, notes: activeKind === 'work' ? $('entry-notes').value : '', date: $('entry-date').value, endDate: $('entry-end-date').value, done: activeKind === 'work' && $('entry-done').checked, datesEdited, editor };
 }
 function refreshDefaultDates() {
   if (busy || hasDraftInput(currentDraft())) return;
@@ -130,7 +131,7 @@ function watchDateChange() {
   dateTimer = setTimeout(watchDateChange, Math.max(1000, nextMidnight - now + 100));
 }
 function resetEditor() {
-  editor = null; $('entry-title').value = ''; $('entry-text').value = ''; $('entry-notes').value = ''; $('entry-done').checked = false;
+  editor = null; $('entry-priority').value = ''; $('entry-title').value = ''; $('entry-text').value = ''; $('entry-notes').value = ''; $('entry-done').checked = false;
   $('cancel-edit').hidden = true; localStorage.removeItem(draftKey(activeKind));
   if (activeKind === 'work') localStorage.removeItem('wanin-draft');
   datesEdited = false; $('entry-date').value = $('entry-end-date').value = today(); updateDateLimits();
@@ -149,6 +150,7 @@ function loadDraft() {
   editor = draft?.editor && kindOf(draft.editor) === activeKind && state.revisions.some(r => r.id === draft.editor.id) ? draft.editor : null;
   $('entry-title').value = draft?.title ?? (editor ? titleOf(editor) : '');
   $('entry-text').value = draft?.text || ''; $('entry-notes').value = draft?.notes ?? editor?.notes ?? '';
+  $('entry-priority').value = draft?.priority ?? editor?.priority ?? '';
   datesEdited = Boolean(draft?.datesEdited);
   const dates = draftDates(draft ? { ...draft, editor } : null);
   $('entry-date').value = dates.start; $('entry-end-date').value = dates.end;
@@ -373,11 +375,11 @@ async function boot() {
   $('entry-form').onsubmit = guard(async e => {
     e.preventDefault(); if (busy) return; busy = true;
     try {
-      const revision = makeRevision({ previous: editor ? [editor] : [], text: $('entry-text').value, title: activeKind === 'note' ? $('entry-title').value : undefined, notes: $('entry-notes').value, date: $('entry-date').value, endDate: $('entry-end-date').value, done: activeKind === 'work' && $('entry-done').checked, kind: activeKind });
+      const revision = makeRevision({ previous: editor ? [editor] : [], priority: $('entry-priority').value === '' ? null : Number($('entry-priority').value), text: $('entry-text').value, title: activeKind === 'note' ? $('entry-title').value : undefined, notes: $('entry-notes').value, date: $('entry-date').value, endDate: $('entry-end-date').value, done: activeKind === 'work' && $('entry-done').checked, kind: activeKind });
       await addRevision(revision); resetEditor(); notify(`${kindName(activeKind)}已保存在本地。`);
     } finally { busy = false; }
   });
-  for (const id of ['entry-date', 'entry-end-date', 'entry-title', 'entry-text', 'entry-notes', 'entry-done']) $(id).addEventListener('input', guard(() => { if (['entry-date', 'entry-end-date'].includes(id)) datesEdited = true; saveDraft(); }));
+  for (const id of ['entry-date', 'entry-end-date', 'entry-priority', 'entry-title', 'entry-text', 'entry-notes', 'entry-done']) $(id).addEventListener('input', guard(() => { if (['entry-date', 'entry-end-date'].includes(id)) datesEdited = true; saveDraft(); }));
   $('cancel-edit').onclick = () => resetEditor();
   $('entries').onclick = guard(async e => {
     if (e.target.closest('[data-reference],[data-copy-number]')) return;
@@ -395,14 +397,14 @@ async function boot() {
       $('notes-dialog').showModal(); $('notes-text').focus(); return;
     }
     if (action === 'edit') {
-      editor = structuredClone(r); $('entry-title').value = activeKind === 'note' ? titleOf(r) : ''; $('entry-date').value = startOf(r); $('entry-end-date').value = endOf(r); $('entry-text').value = r.text; $('entry-notes').value = r.notes || ''; $('entry-done').checked = r.done;
+      editor = structuredClone(r); $('entry-priority').value = r.priority ?? ''; $('entry-title').value = activeKind === 'note' ? titleOf(r) : ''; $('entry-date').value = startOf(r); $('entry-end-date').value = endOf(r); $('entry-text').value = r.text; $('entry-notes').value = r.notes || ''; $('entry-done').checked = r.done;
       $('editor-title').textContent = `編輯${kindName(activeKind)}`; $('save-entry').textContent = '儲存修改'; $('cancel-edit').hidden = false; saveDraft(); $('entry-text').focus(); $('entry-form').scrollIntoView({ behavior: 'smooth', block: 'center' }); render(); return;
     }
     busy = true;
     try {
       if (action === 'delete' && !await confirmAction(`刪除這筆${kindName(activeKind)}？`, '刪除會同步到其他裝置，也會更新對應 TXT。完整備份仍保留歷史版本。')) return;
       const versions = heads(state.revisions).find(g => g.recordId === r.recordId)?.versions || [r];
-      await addRevision(makeRevision({ previous: action === 'resolve' ? versions : [r], text: r.text, title: kindOf(r) === 'note' ? titleOf(r) : undefined, notes: r.notes || '', startDate: startOf(r), endDate: endOf(r), done: action === 'toggle' ? !r.done : r.done, deleted: action === 'delete' || r.deleted }));
+      await addRevision(makeRevision({ previous: action === 'resolve' ? versions : [r], text: r.text, priority: r.priority ?? null, title: kindOf(r) === 'note' ? titleOf(r) : undefined, notes: r.notes || '', startDate: startOf(r), endDate: endOf(r), done: action === 'toggle' ? !r.done : r.done, deleted: action === 'delete' || r.deleted }));
       if (editor?.recordId === r.recordId && action !== 'toggle') resetEditor();
     } finally { busy = false; render(); }
   });

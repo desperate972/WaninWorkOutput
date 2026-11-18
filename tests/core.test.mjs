@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeRevision, heads, txt as numberedTxt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference, today, hasDraftInput, draftDates } from '../core.js';
+import { makeRevision, heads, txt as numberedTxt, filename, validDate, splitImport, validateBackup, fingerprint, updatedFor, startOf, endOf, datesOf, reportDates, occursOn, dateLabel, kindOf, reportModes, reportStatus, titleOf, numberOf, referenceParts, findReference, today, hasDraftInput, draftDates, compareListEntries } from '../core.js';
 import { Drive } from '../drive.js';
 // Existing content fixtures ignore the new identity prefix; dedicated tests below assert full numbered output.
 const withoutNumbers = text => text.replace(/(^|\r?\n)(\d+\.)\[(?:W|N)-[A-Z0-9]+\] /g, '$1$2');
@@ -449,4 +449,45 @@ test('editing an existing item retains its dates independently of the new-entry 
   const editor=create('既有項目',{startDate:'2026-10-29',endDate:'2026-10-31'});
   assert.deepEqual(draftDates({editor},'2026-11-03'),{start:'2026-10-29',end:'2026-10-31'});
   assert.deepEqual(draftDates({editor,date:'2026-10-28',endDate:'2026-11-01'},'2026-11-03'),{start:'2026-10-28',end:'2026-11-01'});
+});
+
+test('list order prioritizes smaller ranks before unranked recent items for work and notes', () => {
+  for(const kind of ['work','note']) {
+    const first=create('最優先舊項目',{kind,priority:1,date:'2026-10-01'}), second=create('第二順位',{kind,priority:2,date:'2026-11-18'}), unranked=create('最新未指定',{kind,date:'2026-12-01'});
+    assert.deepEqual([unranked,second,first].sort(compareListEntries).map(r=>r.text),['最優先舊項目','第二順位','最新未指定']);
+  }
+});
+test('equal priorities and unranked entries sort by start date then creation time newest first', () => {
+  for(const priority of [null,1]) {
+    const a=create('舊日期',{priority,startDate:'2026-11-17',endDate:'2026-12-01'}), b=create('較早建立',{priority,date:'2026-11-18'}), c=create('較晚建立',{priority,date:'2026-11-18'});
+    b.createdAt='2026-11-18T01:00:00Z';c.createdAt='2026-11-18T02:00:00Z';
+    assert.deepEqual([a,b,c].sort(compareListEntries).map(r=>r.text),['較晚建立','較早建立','舊日期']);
+    c.createdAt=b.createdAt;c.order='000000000100';b.order='000000000099';assert.ok(compareListEntries(c,b)<0);
+  }
+});
+test('priority can be cleared and survives work status, notes, edits and deletion', () => {
+  const a=create('工作',{priority:3}), b=create(a.text,{previous:[a],done:true,notes:'新增備註'}), c=create(b.text,{previous:[b],deleted:true}), cleared=create(b.text,{previous:[b],priority:null});
+  assert.equal(b.priority,3);assert.equal(c.priority,3);assert.equal(cleared.priority,null);
+  assert.equal(numberOf(a),numberOf(cleared));assert.equal(hasDraftInput({priority:'2'}),true);
+});
+test('old backups without priorities remain valid and unranked while invalid ranks are rejected', () => {
+  const legacy=create('舊工作');delete legacy.priority;assert.equal(validateBackup({format:'wanin-backup-v1',revisions:[legacy]})[0].priority,undefined);
+  assert.equal(compareListEntries(legacy,{...legacy,priority:null}),0);
+  for(const priority of [0,-1,1.5,'1',Infinity,Number.MAX_SAFE_INTEGER+1]) {
+    assert.throws(()=>create('無效',{priority}),/優先順序/);
+    assert.throws(()=>validateBackup({format:'wanin-backup-v1',revisions:[{...legacy,priority}]}),/格式/);
+  }
+});
+test('priority-only concurrent edits remain conflicts and resolution keeps chosen rank', () => {
+  const a=create('工作'), b=create(a.text,{previous:[a],priority:1}), c=create(a.text,{previous:[a],priority:2});
+  assert.equal(heads([a,b,c])[0].conflict,true);
+  const chosen=create(c.text,{previous:[b,c],priority:c.priority});assert.equal(heads([a,b,c,chosen])[0].versions[0].priority,2);
+});
+test('Drive and backup retain priority, while TXT order and content stay independent of list ranking', async () => {
+  const drive=new MemoryDrive(), a=create('先建立',{priority:9}), b=create('後建立',{priority:1});a.createdAt='2026-10-27T01:00:00Z';b.createdAt='2026-10-27T02:00:00Z';
+  await drive.push(a);await drive.push(b);const {fetched}=await drive.pull(new Set());const restored=validateBackup(JSON.parse(JSON.stringify({format:'wanin-backup-v1',revisions:fetched})));
+  assert.deepEqual(restored.sort(compareListEntries).map(r=>r.priority),[1,9]);
+  const before=numberedTxt([a,b],day,false), c=create(a.text,{previous:[a],priority:1});
+  assert.equal(numberedTxt([a,b,c],day,false),before);
+  const reports=await drive.writeReport(day,false,[a,b],[]), writes=drive.writes;await drive.writeReport(day,false,[a,b,c],reports);assert.equal(drive.writes,writes);
 });
